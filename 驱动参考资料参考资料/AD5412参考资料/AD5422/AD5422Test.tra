@@ -1,0 +1,22 @@
+*** Creating Trace Output File 'AD5422Test.tra' Ok.
+### Preparing for ADS-LD.
+### Creating ADS-LD Command Line
+### List of Objects: adding '"aduc702x.o"'
+### List of Objects: adding '"aduc7026driver.o"'
+### List of Objects: adding '"ad5422test.o"'
+### List of Objects: adding '"ad5422.o"'
+### ADS-LD Command completed:
+--cpu ARM7TDMI "aduc702x.o" "aduc7026driver.o" "ad5422test.o" "ad5422.o" --strict --scatter "AD5422Test.sct" 
+--autoat --summary_stderr --info summarysizes --map --xref --callgraph --symbols 
+--info sizes --info totals --info unused --info veneers 
+ --list ".\AD5422Test.map" -o "AD5422Test.axf"### Preparing Environment (PrepEnvAds)
+### ADS-LD Output File: 'AD5422Test.axf'
+### ADS-LD Command File: 'AD5422Test.lnp'
+### Checking for dirty Components...
+### Creating CmdFile 'AD5422Test.lnp', Handle=0x000003D4
+### Writing '.lnp' file
+### ADS-LD Command file 'AD5422Test.lnp' is ready.
+### ADS-LD: About to start ADS-LD Thread.
+### ADS-LD: executed with 0 errors
+### Updating obj list
+### LDADS_file() completed.

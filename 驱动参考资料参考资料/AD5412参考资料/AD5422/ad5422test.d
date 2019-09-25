@@ -1,0 +1,14 @@
+ad5422test.o: AD5422Test.c
+ad5422test.o: ADuC7026.h
+ad5422test.o: C:\Keil\ARM\INC\ADI\irq.h
+ad5422test.o: C:\Keil\ARM\INC\ADI\timer.h
+ad5422test.o: C:\Keil\ARM\INC\ADI\dac.h
+ad5422test.o: C:\Keil\ARM\INC\ADI\uart.h
+ad5422test.o: C:\Keil\ARM\INC\ADI\I2C.h
+ad5422test.o: C:\Keil\ARM\INC\ADI\PLA.H
+ad5422test.o: C:\Keil\ARM\INC\ADI\GPIO.h
+ad5422test.o: C:\Keil\ARM\INC\ADI\flash.h
+ad5422test.o: C:\Keil\ARM\INC\ADI\pwm.h
+ad5422test.o: ADuC7026Driver.h
+ad5422test.o: C:\Keil\ARM\RV31\INC\stdio.h
+ad5422test.o: AD5422.h

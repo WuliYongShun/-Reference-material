@@ -1,0 +1,4 @@
+--cpu ARM7TDMI "aduc702x.o" "aduc7026driver.o" "ad5422test.o" "ad5422.o" --strict --scatter "AD5422Test.sct" 
+--autoat --summary_stderr --info summarysizes --map --xref --callgraph --symbols 
+--info sizes --info totals --info unused --info veneers 
+ --list ".\AD5422Test.map" -o "AD5422Test.axf"
