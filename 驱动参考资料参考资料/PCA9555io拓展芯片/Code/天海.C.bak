@@ -1,0 +1,7637 @@
+//-----------------------------------------------------------------------------
+//PROJECT CODE : 天海短路测试
+//CREATE DATE  : 2010.06.25
+//CREATED BY   : GaoWei
+//FUNCTION     : 多路开短路测试
+//部分说明     :
+
+//-----------------------------------------------------------------------------  
+#include <c8051f000.h>                   
+#include"intrins.h"  
+#include <stdio.h> 
+
+//定义PCA9555A内部八个寄存器地址
+#define PCA9555A_InPutPort0   		0x00     //输入端口0  
+#define PCA9555A_InPutPort1   		0x01     //输入端口1
+#define PCA9555A_OutPutPort0   	  0x02     //输出端口0
+#define PCA9555A_OutPutPort1   	  0x03     //输出端口1
+#define PCA9555A_Inversionport0   0x04		 //极性反转端口0
+#define PCA9555A_Inversionport1   0x05		 //极性反转端口1
+#define PCA9555A_Configport0			0x06		 //配制端口0
+#define PCA9555A_Configport1			0x07		 //配制端口1
+
+#define  WRITE       0x00                 // WRITE direction bit
+#define  READ        0x01                 // READ direction bit
+
+#define  CHIP_A   0x40                 // Device address for chip A PCA9555DeviceAddress=0x40
+#define  CHIP_B   0x42                 // Device address for chip B PCA9555DeviceAddress=0x41
+#define  CHIP_C   0x44                 // Device address for chip C PCA9555DeviceAddress=0x42
+#define  CHIP_D   0x46                 // Device address for chip D PCA9555DeviceAddress=0x43
+#define  CHIP_E   0x48                 // Device address for chip E PCA9555DeviceAddress=0x44
+#define  CHIP_F   0x4A                 // Device address for chip F PCA9555DeviceAddress=0x45
+//#define  CHIP_G   0x4C                 // Device address for chip G PCA9555DeviceAddress=0x46
+//#define  CHIP_H   0x4E                 // Device address for chip H PCA9555DeviceAddress=0x47
+
+#define  SMB_BUS_ERROR  0x00        // (all modes) BUS ERROR
+#define  SMB_START      0x08        // (MT & MR) START transmitted 起始条件已发出
+#define  SMB_RP_START   0x10        // (MT & MR) repeated START重复起始条件已发出
+#define  SMB_MTADDACK   0x18        // (MT) Slave address + W transmitted;从地址+W已发出，且收到ACK
+                                    //  ACK received
+#define  SMB_MTADDNACK  0x20        // (MT) Slave address + W transmitted;从地址+W已发出，且收到NACK
+                                    //  NACK received
+#define  SMB_MTDBACK    0x28        // (MT) data byte transmitted; ACK rec'vd 数据字节已发出，收到ACK
+#define  SMB_MTDBNACK   0x30        // (MT) data byte transmitted; NACK rec'vd数据字节已发出，收到NACK
+#define  SMB_MTARBLOST  0x38        // (MT) arbitration lost 竞争失败，保存当前数据
+#define  SMB_MRADDACK   0x40        // (MR) Slave address + R transmitted;从地址+R已发出，且收到ACK
+                                    //  ACK received
+#define  SMB_MRADDNACK  0x48        // (MR) Slave address + R transmitted;从地址+R已发出，且收到ACK
+                                    //  NACK received
+#define  SMB_MRDBACK    0x50        // (MR) data byte rec'vd; ACK transmitted数据字节收到，ACK已发出
+#define  SMB_MRDBNACK   0x58        // (MR) data byte rec'vd; NACK transmitted数据字节收到，ACK已发出
+unsigned char COMMAND;                       // Holds the slave address + R/W bit for
+unsigned int WORD,WORDT;                          // Holds data to be transmitted by the SMBus,OR data that has just been received.
+unsigned char WORDR; 
+unsigned char BYTE_NUMBER;          // Used by ISR to check what data has just been, sent - High address byte, Low byte, or data byte
+unsigned char RegAdd;
+
+//----------------------------------------------------------------------------- 
+sfr16 TMR3RL   = 0x92;                 // Timer3 reload value
+sfr16 TMR3     = 0x94;                 // Timer3 counter
+sfr16 ADC0     = 0xbe;                 // ADC0 data
+sfr16 ADC0GT   = 0xc4;                 // ADC0 greater than window
+sfr16 ADC0LT   = 0xc6;                 // ADC0 less than window 
+//-----------------------------------------------------------------------------
+bit SM_BUSY;
+//LCD控制位
+sbit LCD_CS = P3^0;
+sbit LCD_DATA = P2^1; 
+sbit LCD_SCLK = P1^5;
+//启动
+sbit Start = P3^3;
+//合格LED
+sbit Led = P3^2;
+//BUZZ
+sbit Buzz = P3^1;
+//CD4067地址选择位
+sbit add_CD4067_A = P1^6;
+sbit add_CD4067_B = P1^7;
+sbit add_CD4067_C = P3^4;
+sbit add_CD4067_D = P3^5;
+ 
+
+
+unsigned char Flag_Short;             //短路标志位
+unsigned char Junc_Short,Num_Short;  
+unsigned char Channel_Select;   //AD通道
+float data adtemp,aaa,xtemp=0;                       //ad临时采样值
+
+
+//-----------------------------------------------------------------------------
+void delay1s(unsigned char U);
+void delaynms (unsigned int uu);
+void delayn_ms (unsigned int uu);
+void delay(unsigned char us);
+void SYSCLK_Init(void);
+void init_lcd (void);
+void init_port (void);
+void init_int(void);
+void init_smbus();
+void init_adc();
+void rst_smbus();
+void SM_Send (unsigned char chip_select, unsigned char byte_address, unsigned int out_byte);
+char SM_Receive (unsigned char chip_select, unsigned char byte_address);
+void SMBus_ISR (void);
+void wr_lcd (unsigned char  dat_comm,unsigned char content);
+void dis_eng(const unsigned char *eng,unsigned char row,unsigned char colum,unsigned char data_size);
+void dis_chn (const unsigned char *chn,unsigned char row,unsigned char colum,unsigned char data_size);
+void myshow(float testdata, unsigned char showadd);              //测试数据实时显示
+void myshow_ShortPin(float testdata, unsigned char showadd);     //测试短路引脚号实时显示
+void Buzz100ms(unsigned char u);   //蜂鸣器短
+void Buzz1s(unsigned char uuu);    //蜂鸣器长
+void choose_chn0();
+void choose_chn1();
+void choose_chn2();
+void choose_chn3();
+void choose_chn4();
+void choose_chn5();
+void choose_chn6();
+void choose_chn7();
+void choose_chn8();
+void choose_chn9();
+void choose_chn10();
+void choose_chn11();
+void choose_chn12();
+void choose_chn13();
+void choose_chn14();
+void choose_chn15();
+void ADC (unsigned char Channel);
+void TstShort(float x1,float x2);
+void Clear();
+void TstA00();
+void TstA01();
+void TstA02();
+void TstA03();
+void TstA04();
+void TstA05();
+void TstA06();
+void TstA07();
+void TstA10();
+void TstA11();
+void TstA12();
+void TstA13();
+void TstA14();
+void TstA15();
+void TstA16();
+void TstA17();
+void TstB00();
+void TstB01();
+void TstB02();
+void TstB03();
+void TstB04();
+void TstB05();
+void TstB06();
+void TstB07();
+void TstB10();
+void TstB11();
+void TstB12();
+void TstB13();
+void TstB14();
+void TstB15();
+void TstB16();
+void TstB17();
+void TstC00();
+void TstC01();
+void TstC02();
+void TstC03();
+void TstC04();
+void TstC05();
+void TstC06();
+void TstC07();
+void TstC10();
+void TstC11();
+void TstC12();
+void TstC13();
+void TstC14();
+void TstC15();
+void TstC16();
+void TstC17();
+void TstD00();
+void TstD01();
+void TstD02();
+void TstD03();
+void TstD04();
+void TstD05();
+void TstD06();
+void TstD07();
+void TstD10();
+void TstD11();
+void TstD12();
+void TstD13();
+void TstD14();
+void TstD15();
+void TstD16();
+void TstD17();
+void TstE00();
+void TstE01();
+void TstE02();
+void TstE03();
+void TstE04();
+void TstE05();
+void TstE06();
+void TstE07();
+void TstE10();
+void TstE11();
+void TstE12();
+void TstE13();
+void TstE14();
+void TstE15();
+void TstE16();
+void TstE17();
+void TstF00();
+void TstF01();
+//void TstF02();
+//void TstF03();
+//void TstF04();
+//void TstF05();
+//void TstF06();
+//void TstF07();
+//void TstF10();
+//void TstF11();
+//void TstF12();
+//void TstF13();
+//void TstF14();
+//void TstF15();
+//void TstF16();
+//void TstF17();
+void TstA00_1();
+void TstA00_2_B00_1();
+void TstB00_2_C00_1();
+void TstC00_2_D00_1();
+void TstD00_2_E00_1();
+void TstE00_2_F00_1();
+
+
+//-----------------------------------------------------------------------------
+main()  
+{   
+	float uu=1;
+    
+  WDTCN = 0xde;
+  WDTCN = 0xad;
+  SYSCLK_Init();              //初始化时钟
+  init_int();
+  init_port (); 
+  init_lcd();
+  init_smbus();
+  init_adc();
+  //delaynms(10); 
+  
+   
+ 
+  dis_chn((const unsigned char *)"长城", 1, 1, 2); 
+	dis_eng((const unsigned char *)"M11", 1, 3, 3);
+  dis_chn((const unsigned char *)"短路测试", 2, 3, 4); 
+  dis_chn((const unsigned char *)"上海沪工", 4, 5, 4);  
+  
+while(1)
+  {  
+//  	if(!(Start))
+//  	{
+  	 
+  	
+  	 Clear();
+  	 wr_lcd (0,0x01);  /*清屏，地址指针指向00H*/ 
+  	 dis_chn((const unsigned char *)"测试中。。。", 1, 1, 6);
+  	 dis_chn((const unsigned char *)"上海沪工", 4, 5, 4); 
+  	
+  	 
+     SM_Send(CHIP_A,PCA9555A_Configport0,0x0000);   //A输出 
+     SM_Send(CHIP_B,PCA9555A_Configport0,0x0000);   //B输出 
+     SM_Send(CHIP_C,PCA9555A_Configport0,0x0000);   //C输出 
+     SM_Send(CHIP_D,PCA9555A_Configport0,0x0000);   //D输出
+     SM_Send(CHIP_E,PCA9555A_Configport0,0x0000);   //E输出 
+     SM_Send(CHIP_F,PCA9555A_Configport0,0x0000);   //F输出 
+     delaynms(2);
+
+ TstA00();
+ TstA01();
+ TstA02();
+ TstA03();
+ TstA04();
+ TstA05();
+ TstA06();
+ TstA07();
+ TstA10();
+ //TstA11();
+ TstA12();
+ //TstA13();              ////////////////////////?????????????????????????????????????????
+ TstA14();
+ TstA15();
+ TstA16();
+ TstA17();
+ SM_Send(CHIP_A,PCA9555A_OutPutPort0,0xffff);   //写1恢复A片全1
+     //delaynms(2);
+ 
+ TstB00();
+ TstB01();
+ TstB02();
+ TstB03();
+ TstB04();
+ TstB05();
+ TstB06();
+ TstB07();
+ TstB10();
+ TstB11();
+ TstB12();
+ TstB13();
+ TstB14();
+ TstB15();
+ TstB16();
+ TstB17();
+
+  SM_Send(CHIP_B,PCA9555A_OutPutPort0,0xffff);   //写1恢复B片全1
+    // delaynms(2);
+ 
+ TstC00();
+ TstC01();
+ TstC02();
+ TstC03();
+ TstC04();
+ TstC05();
+ TstC06();
+ TstC07();
+ TstC10();
+ TstC11();
+ TstC12();
+ TstC13();
+ TstC14();
+ TstC15();
+ TstC16();
+ TstC17();
+  SM_Send(CHIP_C,PCA9555A_OutPutPort0,0xffff);   //写1恢复C片全1
+     //delaynms(2);
+ 
+ TstD00();
+ TstD01();
+ TstD02();
+ TstD03();
+ TstD04();
+ TstD05();
+ TstD06();
+ TstD07();
+ TstD10();
+ TstD11();
+ TstD12();
+ TstD13();
+ TstD14();
+ TstD15();
+ TstD16();
+ TstD17();
+  SM_Send(CHIP_D,PCA9555A_OutPutPort0,0xffff);   //写1恢复D片全1
+  _nop_(); 
+     //delaynms(2);       
+ 
+// TstE00();
+// TstE01();
+// TstE02();
+// TstE03();
+// TstE04();
+// TstE05();
+// TstE06();
+ TstE07();
+ TstE10();
+ //TstE11();
+ TstE12();
+ TstE13();
+ TstE14();
+ TstE15();
+ TstE16();
+ TstE17();
+ SM_Send(CHIP_E,PCA9555A_OutPutPort0,0xffff);   //写1恢复E片全1
+     //delaynms(2); 
+ 
+ TstF00();
+ TstF01();
+// TstF02();
+// TstF03();
+// TstF04();
+// TstF05();
+// TstF06();
+// TstF07();
+// TstF10();
+// TstF11();
+// TstF12();
+// TstF13();
+// TstF14();
+// TstF15();
+// TstF16();
+// TstF17(); 
+ SM_Send(CHIP_F,PCA9555A_OutPutPort0,0xffff);   //写1恢复F片全1
+     //delaynms(2); 
+     
+  if(!(Flag_Short))
+ 	{
+ Led = 0;
+ wr_lcd (0,0x01);  /*清屏，地址指针指向00H*/  
+  dis_chn((const unsigned char *)"测试完成", 1, 1, 4); 
+	dis_chn((const unsigned char *)"合格！", 3, 5, 3);
+	 Buzz100ms(3); 
+}
+ else
+ 	{
+ 		wr_lcd (0,0x01);  /*清屏，地址指针指向00H*/  
+    dis_chn((const unsigned char *)"测试完成", 1, 1, 4); 
+	  dis_chn((const unsigned char *)"产品短路！", 3, 3, 5);
+	  if(Junc_Short==1)
+	  	{dis_eng((const unsigned char *)"A", 4, 3, 1);}
+	  if(Junc_Short==2)
+	  	{dis_eng((const unsigned char *)"B", 4, 3, 1);}
+	  if(Junc_Short==3)
+	  	{dis_eng((const unsigned char *)"C", 4, 3, 1);}
+	  if(Junc_Short==4)
+	  	{dis_eng((const unsigned char *)"D", 4, 3, 1);}
+	  if(Junc_Short==5)
+	  	{dis_eng((const unsigned char *)"E", 4, 3, 1);}
+	  if(Junc_Short==6)
+	  	{dis_eng((const unsigned char *)"F", 4, 3, 1);}
+	  if(Junc_Short==7)
+	  	{dis_eng((const unsigned char *)"G", 4, 3, 1);}
+	  if(Junc_Short==8)
+	  	{dis_eng((const unsigned char *)"H", 4, 3, 1);}
+	  
+	  if(Num_Short==1)
+	  	{dis_eng((const unsigned char *)"1", 4, 4, 1);}
+	  if(Num_Short==2)
+	  	{dis_eng((const unsigned char *)"2", 4, 4, 1);}
+	  if(Num_Short==3)
+	  	{dis_eng((const unsigned char *)"3", 4, 4, 1);}
+	  if(Num_Short==4)
+	  	{dis_eng((const unsigned char *)"4", 4, 4, 1);}
+	  if(Num_Short==5)
+	  	{dis_eng((const unsigned char *)"5", 4, 4, 1);}
+	  if(Num_Short==6)
+	  	{dis_eng((const unsigned char *)"6", 4, 4, 1);}
+	  if(Num_Short==7)
+	  	{dis_eng((const unsigned char *)"7", 4, 4, 1);}
+	  if(Num_Short==8)
+	  	{dis_eng((const unsigned char *)"8", 4, 4, 1);}
+	  if(Num_Short==9)
+	  	{dis_eng((const unsigned char *)"9", 4, 4, 1);}
+	  if(Num_Short==10)
+	  	{dis_eng((const unsigned char *)"10", 4, 4, 2);}
+	  if(Num_Short==11)
+	  	{dis_eng((const unsigned char *)"11", 4, 4, 2);}
+	  if(Num_Short==12)
+	  	{dis_eng((const unsigned char *)"12", 4, 4, 2);}
+	  if(Num_Short==13)
+	  	{dis_eng((const unsigned char *)"13", 4, 4, 2);}
+	  if(Num_Short==14)
+	  	{dis_eng((const unsigned char *)"14", 4, 4, 2);}
+	  if(Num_Short==15)
+	  	{dis_eng((const unsigned char *)"15", 4, 4, 2);}
+	  if(Num_Short==16)
+	  	{dis_eng((const unsigned char *)"16", 4, 4, 2);}
+	  if(Num_Short==17)
+	  	{dis_eng((const unsigned char *)"17", 4, 4, 2);}
+	  if(Num_Short==18)
+	  	{dis_eng((const unsigned char *)"18", 4, 4, 2);}
+	  if(Num_Short==19)
+	  	{dis_eng((const unsigned char *)"19", 4, 4, 2);}
+	  if(Num_Short==20)
+	  	{dis_eng((const unsigned char *)"20", 4, 4, 2);}	
+	   Buzz1s(1);
+ 	}
+   
+     
+     
+     
+     
+     
+//     SM_Send(CHIP_A,PCA9555A_Configport0,0xfeff);   //输入
+//     delaynms(10);
+//     SM_Receive (CHIP_A, PCA9555A_InPutPort0);
+//     WORDR = WORDR;    
+     
+     
+ 
+  
+
+ 
+}		
+//} 
+}
+
+//-----------------------------------------------------------------------------
+void delay(unsigned char us)
+{
+	while (us)
+	{  _nop_();
+		  --us;
+	}
+}
+//-----------------------------------------------------------------------------
+void SYSCLK_Init(void)
+{  int i;                              // delay counter
+	 OSCXCN = 0x67;                      // start external oscillator with
+                                       // 4MHz crystal
+   for (i=0; i < 256; i++) ;           // Wait for osc. to start up
+   while (!(OSCXCN & 0x80)) ;  
+   OSCICN = 0x88;                      // select external oscillator as SYSCLK
+                                       // source and enable missing clock
+                                       // detector
+                                       //	OSCICN = 0x07;   //interal 16MHZ
+                            
+}
+//------------------------------------------------------------------------------
+void init_port (void) 
+{   XBR0  = 0x01;     //使能SMBUS
+	  XBR2  = 0x40;
+	 
+	  PRT0CF = 0Xff; 
+	  PRT1CF = 0Xff;
+	  PRT2CF = 0Xff;
+	  PRT3CF = 0X00; 
+	}
+//------------------------------------------------------------------------------------------
+void init_smbus()    //SDA=P0.0  SCL=P0.1
+{
+//    SMB0CN    = 0x00;	                      //禁止ＳＭｂｕｓ 
+//    SM_BUSY = 0;
+    SMB0CN    = 0x40;	                      //允许ＳＭｂｕｓ
+    SMB0CR    = 0x99;						  //系统时钟为100KHZ
+
+}
+//------------------------------------------------------------------------------------------
+void init_adc()
+{
+	AMX0CF = 0x00;	// AMUX  配置差动/单端方式 
+	ADC0CN = 0x80;	// ADC Control Register
+	ADC0CF = 0x00;	// 增益1倍，转换时间系统时钟1个
+	 
+	 REF0CN = 0x03;  
+   ADC0CN |= 0x80; // 
+	}
+//------------------------------------------------------------------------------------------
+void rst_smbus()
+{
+    SMB0CN    = 0x00;	                      //禁止ＳＭｂｕｓ 
+    SMB0CN    = 0x40;	                      //允许ＳＭｂｕｓ
+    SMB0CR    = 0x99;						  //系统时钟为100KHZ
+
+}
+//------------------------------------------------------------------------------
+void init_lcd (void)
+{
+  delayn_ms (3);
+  wr_lcd (0,0x30);  /*30---基本指令动作*/ 
+  wr_lcd (0,0x01);  /*清屏，地址指针指向00H*/
+  delayn_ms (3);
+  wr_lcd (0,0x06);  /*光标的移动方向*/
+  wr_lcd (0,0x0c);  /*开显示，关游标*/ 
+}
+//-------------------------------------------------------------------------------------------
+//*chn:the chinese arrary
+//row:1-4
+//colum:1-8
+//data_size:1-16
+//
+//-------------------------------------------------------------------------------------------
+void dis_eng(const unsigned char *eng,unsigned char row,unsigned char colum,unsigned char data_size)
+{const unsigned char *i = 0;
+	if (!(data_size < 17 && row < 5 && colum < 9)) return;
+      i=data_size+eng;
+	wr_lcd (0,0x30);
+	if (row < 3) wr_lcd(0,0x80+((row-1)*16+(colum-1)));
+	else wr_lcd(0,0x88+((row-3)*16+(colum-1)));
+	while(eng!=i)wr_lcd (1,*eng++);
+}
+//-------------------------------------------------------------------------------------------
+//*chn:the chinese arrary
+//row:1-4
+//colum:1-8
+//data_size:1-8
+//
+//------------------------------------------------------------------------------------------
+void dis_chn (const unsigned char *chn,unsigned char row,unsigned char colum,unsigned char data_size)
+{const unsigned char *i = 0;
+	  if(!(data_size < 9 && row < 5 && colum < 9)) return;
+	  i=data_size*2+chn;
+	  wr_lcd (0,0x30);
+	  if (row<3) wr_lcd(0,0x80+((row-1)*16+(colum-1)));
+	  else  wr_lcd(0,0x88+((row-3)*16+(colum-1)));
+	  while(chn!=i) wr_lcd (1,*chn++);
+}
+//------------------------------------------------------------------------------
+void wr_lcd (unsigned char  dat_comm,unsigned char content)
+{
+  unsigned char a,i,j;
+  delayn_ms(5);
+  a=content;
+  LCD_CS = 1;   //GPIOPinWrite(GPIO_PORTB_BASE, LCD_CS, LCD_CS);//pb1,pin11,u2
+  LCD_DATA = 1; //GPIOPinWrite(GPIO_PORTB_BASE, LCD_DATA, LCD_DATA);//pb0,pin14,u2
+  LCD_SCLK = 0; //GPIOPinWrite(GPIO_PORTB_BASE, LCD_SCLK, ~LCD_SCLK);//pb2,pin12,u2
+  delayn_ms(1);
+  for(i=0;i<5;i++)///1 1 1 1 1
+  {
+    delayn_ms(1);
+    LCD_SCLK = 1; //GPIOPinWrite(GPIO_PORTB_BASE, LCD_SCLK, LCD_SCLK);
+    delayn_ms(1);
+    LCD_SCLK = 0; //GPIOPinWrite(GPIO_PORTB_BASE, LCD_SCLK, ~LCD_SCLK);
+  }
+  LCD_DATA = 0;   //GPIOPinWrite(GPIO_PORTB_BASE, LCD_DATA, ~LCD_DATA);///rw 0
+  delayn_ms(1);
+  LCD_SCLK = 1;   //GPIOPinWrite(GPIO_PORTB_BASE, LCD_SCLK, LCD_SCLK);
+  delayn_ms(1);
+  LCD_SCLK = 0;   //GPIOPinWrite(GPIO_PORTB_BASE, LCD_SCLK, ~LCD_SCLK);
+  if(dat_comm)//rs
+    {LCD_DATA = 1;}//GPIOPinWrite(GPIO_PORTB_BASE, LCD_DATA, LCD_DATA);   //data
+  else LCD_DATA = 0; //GPIOPinWrite(GPIO_PORTB_BASE, LCD_DATA, ~LCD_DATA);   //command
+  delayn_ms(1);
+  LCD_SCLK = 1;   //GPIOPinWrite(GPIO_PORTB_BASE, LCD_SCLK, LCD_SCLK);
+  delayn_ms(1);
+  LCD_SCLK = 0;   //GPIOPinWrite(GPIO_PORTB_BASE, LCD_SCLK, ~LCD_SCLK);
+  LCD_DATA = 0;   //GPIOPinWrite(GPIO_PORTB_BASE, LCD_DATA, ~LCD_DATA);///0
+ delayn_ms(1);
+  LCD_SCLK = 1;   //GPIOPinWrite(GPIO_PORTB_BASE, LCD_SCLK, LCD_SCLK);
+ delayn_ms(1);
+  LCD_SCLK = 0;   //GPIOPinWrite(GPIO_PORTB_BASE, LCD_SCLK, ~LCD_SCLK);
+  for(j=0;j<2;j++)
+  {
+    for(i=0;i<4;i++)
+    {
+     if (a&0x80)
+     	{LCD_DATA = 1;}
+     	else LCD_DATA = 0;
+     //GPIOPinWrite(GPIO_PORTB_BASE, LCD_DATA, a&0x80? LCD_DATA:(unsigned char)~LCD_DATA); 
+     delayn_ms(1);
+     LCD_SCLK = 1; //GPIOPinWrite(GPIO_PORTB_BASE, LCD_SCLK, LCD_SCLK);
+     delayn_ms(1);
+     LCD_SCLK = 0;//GPIOPinWrite(GPIO_PORTB_BASE, LCD_SCLK, ~LCD_SCLK);
+     a=a<<1;
+    }
+    LCD_DATA = 0;  //GPIOPinWrite(GPIO_PORTB_BASE, LCD_DATA, ~LCD_DATA);///0
+    delayn_ms(1);
+    for(i=0;i<4;i++)///0 0 0 0
+    {
+      LCD_SCLK = 1; //GPIOPinWrite(GPIO_PORTB_BASE, LCD_SCLK, LCD_SCLK);
+	delayn_ms(1);
+  	LCD_SCLK = 0; //GPIOPinWrite(GPIO_PORTB_BASE, LCD_SCLK, ~LCD_SCLK);
+    }
+  }
+}
+//-----------------------------------------------------------------------------
+void init_int(void)
+{   IE        = 0x80; 
+    EIE1      = 0x02;
+     EIP2      = 0x02;    //AD优先 
+    EA = 1; 
+}
+//-----------------------------------------------------------------------------
+// SMBus random read function------------------------------------------------------
+// Reads 1 byte from the specified memory location.
+//
+// byte_address = memory address of byte to read
+// chip_select = device address of EEPROM to be read from
+char SM_Receive (unsigned char chip_select, unsigned char byte_address)
+{
+   while (SM_BUSY);                          // Wait for bus to be free.
+   SM_BUSY = 1;                              // Occupy SMBus (set to busy)
+    //SFRPAGE   = SMB0_PAGE;
+   SMB0CN = 0x44;                            // SMBus enabled, ACK on acknowledge cycle
+
+   BYTE_NUMBER = 2;                          // 2 address bytes
+   COMMAND = (chip_select | READ);           // Chip select + READ
+   RegAdd = byte_address;
+   
+   //SFRPAGE   = SMB0_PAGE;
+   STO = 0;
+   STA = 1;                                  // Start transfer
+   
+   while (SM_BUSY);          
+   return WORD;
+}
+//------------------------------------------------------------------------------------------
+void SM_Send (unsigned char chip_select, unsigned char byte_address, unsigned int out_byte)
+//out_byte为16位，高8位写P0，低8位些P1
+{
+    while (SM_BUSY);                          // Wait for SMBus to be free.
+    SM_BUSY = 1;                              // Occupy SMBus (set to busy)
+    //SFRPAGE   = SMB0_PAGE;
+    SMB0CN = 0x44;                            // SMBus enabled,
+                                             // ACK on acknowledge cycle 
+
+   BYTE_NUMBER = 2;                          // 2 address bytes.
+   COMMAND = (chip_select | WRITE);  
+   RegAdd = byte_address;
+   WORD = out_byte;
+   
+   //SFRPAGE   = SMB0_PAGE;
+   STO = 0;
+   STA = 1;                                  // Start transfer
+  
+}
+//------------------------------------------------------------------------------------
+// Interrupt Service Routine
+//------------------------------------------------------------------------------------
+void SMBUS_ISR (void) interrupt 7
+{
+   switch (SMB0STA){                   // Status code for the SMBus (SMB0STA register)
+
+      // Master Transmitter/Receiver: START condition transmitted.
+      // The R/W bit of the COMMAND word sent after this state will
+      // always be a zero (W) because for both read and write,
+      // the memory address must be written first.
+      case SMB_START:
+          //SFRPAGE   = SMB0_PAGE;
+//           if (COMMAND & 0x01){    // If R/W=READ, sent repeated START.
+//                SMB0DAT = COMMAND;   // Load address of the slave to be accessed.
+//           } else
+		      SMB0DAT = (COMMAND & 0xFE);   // Load address of the slave to be accessed.
+          STA = 0;                      // Manually clear START bit
+          break;
+
+      // Master Transmitter/Receiver: Repeated START condition transmitted.
+      // This state should only occur during a read, after the memory address has been
+      // sent and acknowledged.
+      case SMB_RP_START:
+         //SFRPAGE   = SMB0_PAGE;
+		     SMB0DAT = COMMAND;            // COMMAND should hold slave address + R.
+         STA = 0;
+         break;
+
+      // Master Transmitter: Slave address + WRITE transmitted.  ACK received.
+      case SMB_MTADDACK:
+      //SFRPAGE = SMB0_PAGE;
+      SMB0DAT = RegAdd;          
+      break;
+
+      // Master Transmitter: Slave address + WRITE transmitted.  NACK received.
+      // The slave is not responding.  Send a STOP followed by a START to try again.
+      case SMB_MTADDNACK:
+      //SFRPAGE   = SMB0_PAGE;
+		  STO = 1;
+      STA = 1;
+      break;
+
+      // Master Transmitter: Data byte transmitted.  ACK received.
+      // This state is used in both READ and WRITE operations.  Check BYTE_NUMBER
+      // for memory address status - if only HIGH_ADD has been sent, load LOW_ADD.
+      // If LOW_ADD has been sent, check COMMAND for R/W value to determine 
+      // next state.
+      case SMB_MTDBACK:
+         switch (BYTE_NUMBER)
+         {
+            case 2:                    // If BYTE_NUMBER=2, only HIGH_ADD
+            	 //SFRPAGE   = SMB0_PAGE;
+            	 if((RegAdd==0)||(RegAdd==2)||(RegAdd==4)||(RegAdd==6))
+            	 	{
+            	 	//WORDT = WORDT>>8;
+            	 	SMB0DAT = (char)(WORD>>8);      // has been sent.
+            	 	}else
+//            	 if((RegAdd==1)||(RegAdd==3)||(RegAdd==5)||(RegAdd==7))
+//            	 	{WORDT = WORD&0xFF;}
+//            	 WORD = (char)WORDT;
+               SMB0DAT = (char)WORD;      // has been sent.
+               BYTE_NUMBER--;          // Decrement for next time around.
+               break;
+            case 1:                    // If BYTE_NUMBER=1, LOW_ADD was just sent.
+               if (COMMAND & 0x01){    // If R/W=READ, sent repeated START.
+                 //SFRPAGE   = SMB0_PAGE;
+    			        STO = 0;
+                  STA = 1;
+               } 
+               else { 
+	            //SFRPAGE   = SMB0_PAGE;
+//	            if((RegAdd==0)||(RegAdd==2)||(RegAdd==4)||(RegAdd==6))
+//            	 	{WORDT = WORD&0xFF;}
+            	 if((RegAdd==0)||(RegAdd==2)||(RegAdd==4)||(RegAdd==6))
+            	 	{
+            	 	//WORDT = WORDT>>8;
+            	 	 SMB0DAT = (char)(WORD);      // If R/W=WRITE, load byte to write.
+            	 	}else
+//            	 	WORDT = (char)WORDT; 
+	              SMB0DAT = (char)(WORD>>8);      // If R/W=WRITE, load byte to write.
+                  BYTE_NUMBER--;
+               }
+         
+               break; 
+            case 0:                   // If BYTE_NUMBER=0, transfer is finished.
+             //SFRPAGE   = SMB0_PAGE;
+               STO = 1;
+               SM_BUSY = 0;            // Free SMBus
+            }
+         break;
+
+      // Master Transmitter: Data byte transmitted.  NACK received.
+      // Slave not responding.  Send STOP followed by START to try again.
+      case SMB_MTDBNACK:
+          //SFRPAGE   = SMB0_PAGE;
+          STO = 1;
+          STA = 1;
+          break;
+
+      // Master Transmitter: Arbitration lost.
+      // Should not occur.  If so, restart transfer.
+      case SMB_MTARBLOST:
+        //SFRPAGE   = SMB0_PAGE; 
+		    STO = 1;
+        STA = 1;
+        break;
+
+      // Master Receiver: Slave address + READ transmitted.  ACK received.
+      // Set to transmit NACK after next transfer since it will be the last (only)
+      // byte.
+      case SMB_MRADDACK:
+        //SFRPAGE   = SMB0_PAGE;
+		    //AA = 0;                       // NACK sent on acknowledge cycle.
+        break;
+ 
+      // Master Receiver: Slave address + READ transmitted.  NACK received.
+      // Slave not responding.  Send repeated start to try again.
+      case SMB_MRADDNACK:
+         //SFRPAGE   = SMB0_PAGE;
+		     STO = 0;
+         STA = 1;
+         break;
+
+      // Data byte received.  ACK transmitted.
+      // State should not occur because AA is set to zero in previous state.
+      // Send STOP if state does occur.
+      case SMB_MRDBACK:
+         //SFRPAGE   = SMB0_PAGE;
+         WORDR = SMB0DAT;
+		     STO = 1;
+         SM_BUSY = 0;
+         break;
+
+      // Data byte received.  NACK transmitted.
+      // Read operation has completed.  Read data register and send STOP.
+      case SMB_MRDBNACK:
+         //SFRPAGE   = SMB0_PAGE;
+		     STO = 1;
+         SM_BUSY = 0;                  // Free SMBus
+         break;
+
+      // All other status codes meaningless in this application. Reset communication.
+      default:
+       //SFRPAGE   = SMB0_PAGE;
+	     STO = 1;                      // Reset communication.
+       SM_BUSY = 0;
+       break;
+      }
+
+   SI=0;                               // clear interrupt flag
+}
+//------------------------------------------------------------------------------
+void delay1s(unsigned char U)
+{ while (U)
+	{delaynms(200);
+		delaynms(200);
+		delaynms(200);
+		delaynms(200);
+        delaynms(200);
+		U--;} }
+//------------------------------------------------------------------------------
+void delaynms (unsigned int uu)
+{  unsigned int oo,ll;
+   for (oo=0;oo<uu;oo++)
+   {for(ll=0;ll<1140;ll++);}}
+//------------------------------------------------------------------------------
+void delayn_ms (unsigned int uu)
+{  unsigned int oo,ll;
+   for (oo=0;oo<uu;oo++) 
+   {for(ll=0;ll<10;ll++);}}
+//------------------------------------------------------------------------------
+//buzzer 100ms per time
+//------------------------------------------------------------------------------
+void Buzz100ms(unsigned char u)
+{ unsigned char i;
+	for(i=0;i<u;i++)
+	{	Buzz = 0;
+		delaynms(100);
+		Buzz = 1;
+		delaynms(100);}}
+//------------------------------------------------------------------------------
+//buzzer 1s per time
+//------------------------------------------------------------------------------
+void Buzz1s(unsigned char uuu)
+{
+	unsigned char i;
+	for(i=0;i<uuu;i++)
+	{	
+		Buzz = 0;
+		delay1s(1);
+		Buzz = 1;
+		delay1s(1);
+    	}
+}
+//------------------------------------------------------------------------------
+void choose_chn0()
+{add_CD4067_A = 1;
+	add_CD4067_B = 1;
+	add_CD4067_C = 1;
+	add_CD4067_D = 1;}
+//------------------------------------------------------------------------------
+void choose_chn1()
+{add_CD4067_A = 0;
+	add_CD4067_B = 1;
+	add_CD4067_C = 1;
+	add_CD4067_D = 1;}
+//------------------------------------------------------------------------------
+void choose_chn2()
+{add_CD4067_A = 1;
+	add_CD4067_B = 0;
+	add_CD4067_C = 1;
+	add_CD4067_D = 1;}
+//------------------------------------------------------------------------------
+void choose_chn3()
+{add_CD4067_A = 0;
+	add_CD4067_B = 0;
+	add_CD4067_C = 1;
+	add_CD4067_D = 1;}
+//------------------------------------------------------------------------------
+void choose_chn4()
+{add_CD4067_A = 1;
+	add_CD4067_B = 1;
+	add_CD4067_C = 0;
+	add_CD4067_D = 1;}
+//------------------------------------------------------------------------------
+void choose_chn5()
+{add_CD4067_A = 0;
+	add_CD4067_B = 1;
+	add_CD4067_C = 0;
+	add_CD4067_D = 1;}
+//------------------------------------------------------------------------------
+void choose_chn6()
+{add_CD4067_A = 1;
+	add_CD4067_B = 0;
+	add_CD4067_C = 0;
+	add_CD4067_D = 1;}
+//------------------------------------------------------------------------------
+void choose_chn7()
+{add_CD4067_A = 0;
+	add_CD4067_B = 0;
+	add_CD4067_C = 0;
+	add_CD4067_D = 1;}
+//------------------------------------------------------------------------------
+void choose_chn8()
+{add_CD4067_A = 1;
+	add_CD4067_B = 1;
+	add_CD4067_C = 1;
+	add_CD4067_D = 0;}
+//------------------------------------------------------------------------------
+void choose_chn9()
+{add_CD4067_A = 0;
+	add_CD4067_B = 1;
+	add_CD4067_C = 1;
+	add_CD4067_D = 0;}
+//------------------------------------------------------------------------------
+void choose_chn10()
+{add_CD4067_A = 1;
+	add_CD4067_B = 0;
+	add_CD4067_C = 1;
+	add_CD4067_D = 0;}
+//------------------------------------------------------------------------------
+void choose_chn11()
+{add_CD4067_A = 0;
+	add_CD4067_B = 0;
+	add_CD4067_C = 1;
+	add_CD4067_D = 0;}
+//------------------------------------------------------------------------------
+void choose_chn12()
+{add_CD4067_A = 1;
+	add_CD4067_B = 1;
+	add_CD4067_C = 0;
+	add_CD4067_D = 0;}
+//------------------------------------------------------------------------------
+void choose_chn13()
+{add_CD4067_A = 0;
+	add_CD4067_B = 1;
+	add_CD4067_C = 0;
+	add_CD4067_D = 0;}
+//------------------------------------------------------------------------------
+void choose_chn14()
+{add_CD4067_A = 1;
+	add_CD4067_B = 0;
+	add_CD4067_C = 0;
+	add_CD4067_D = 0;}
+//------------------------------------------------------------------------------
+void choose_chn15()
+{add_CD4067_A = 0;
+	add_CD4067_B = 0;
+	add_CD4067_C = 0;
+	add_CD4067_D = 0;}
+//------------------------------------------------------------------------------
+////-----------------------------------------------------------------------------
+////显示函数
+////-----------------------------------------------------------------------------
+void myshow(float testdata, unsigned char showadd)
+{     
+	     unsigned char a[10]={0x30,0x31,0x32,0x33,0x34,0x35,0x36,0x37,0x38,0x39};
+       int i=0;            
+       int l=0,m=0,n=0,j=0,jj=0;  //l-百位, m-十位，n-个位，j-十分位小数,jj-百分位小数
+       int h;                  //10-99.9的数扩大100倍
+	     int t;                  //扩大100倍/10倍
+	     int k;
+	     
+       unsigned char zl; 
+	      
+	  if (testdata>=0 && testdata<=0.99)
+	  {  zl=showadd;          //ddram add                         
+       wr_lcd(0,zl);
+       delay(0x1); 
+       
+//       zl=0x20;             //half space
+//       wrd(zl);
+       
+       zl=0x30;             //0
+       wr_lcd(1,zl);
+       
+       zl=0x2E;              //.   
+       wr_lcd(1,zl);
+       
+       t=testdata*100;
+       j=(int)t/10;
+       wr_lcd(1,a[j]);
+		   i=0; //<input type="hidden" >
+		   
+       jj=t%10;        
+       wr_lcd(1,a[jj]); 
+	     zl=zl;
+         
+            }
+    
+    else if (testdata>=1 && testdata<=9.9)
+    	 { zl=showadd;       //ddram add 
+    	  wr_lcd(0,zl);
+    	  delay(0x01);
+    	  
+    	  zl=0x20;          //half space
+    	  wr_lcd(1,zl);
+    	  
+    	  t=testdata*10; 
+    	  n=(int)t/10;
+    	  wr_lcd(1,a[n]);
+    	  i=0;              //i clear
+    	  
+    	  zl=0x2E;          //.
+    	  wr_lcd(1,zl);        
+    	
+    	  j=t%10;           //	  
+		    wr_lcd(1,a[j]); 
+		    zl=zl;
+    	  }
+       
+    
+    else if (testdata>=10 && testdata<=99.90)
+    {	
+       zl=showadd;       //ddram add 
+       wr_lcd(0,zl);
+       delay(0x01);
+       
+       t=testdata*10;
+	     m=(int)t/100;
+       wr_lcd(1,a[m]);
+       
+       h=t%100;
+       n=(int)h/10;
+       wr_lcd(1,a[n]); 
+     
+       zl=0x2E;          //.
+       wr_lcd(1,zl);
+       
+       j=h%10;
+       wr_lcd(1,a[j]);
+       zl=zl;
+   	   }
+   
+   else if (testdata>=100 && testdata<=199.9)
+   	{zl=showadd;
+   		wr_lcd(0,zl);
+   		delay(0x01); 
+   		
+   		t=testdata*10;
+   		l=(int)t/1000;
+   		wr_lcd(1,a[l]);           //百位
+   	  
+   	  k=t%1000;
+   		m=(int)k/100;
+   		wr_lcd(1,a[m]);           //十位
+   		
+   		h=k%100;
+   		n=(int)h/10;
+   		wr_lcd(1,a[n]);           //个位
+   		
+   		zl=0x2E;          //.
+      wr_lcd(1,zl);
+      
+      j=h%10;
+      wr_lcd(1,a[j]);
+      zl=zl;
+    
+   		}   
+   
+    	 
+    	  else 
+    	{
+    	 
+    	 zl=0xB4;             //错
+    	 wr_lcd(1,zl);
+    	 zl=0xED;
+    	 wr_lcd(1,zl);
+    	 zl=0x21;             //！
+    	 wr_lcd(1,zl);
+    	 }
+    }
+////-----------------------------------------------------------------------------
+////显示短路引脚函数
+////-----------------------------------------------------------------------------
+void myshow_ShortPin(float testdata, unsigned char showadd)
+{     
+	     unsigned char a[10]={0x30,0x31,0x32,0x33,0x34,0x35,0x36,0x37,0x38,0x39};
+       int i=0;            
+       int l=0,m=0,n=0,j=0,jj=0;  //l-百位, m-十位，n-个位，j-十分位小数,jj-百分位小数
+       int h;                  //10-99.9的数扩大100倍
+	     int t;                  //扩大100倍/10倍
+	     //int k;
+	     
+       unsigned char zl; 
+	      
+	  if (testdata>=0 && testdata<=0.99)                //值为0说明8脚短路，显示PIN8
+	  {           	               
+       zl=showadd;          //ddram add                         
+       wr_lcd(0,zl);
+       delay(0x1); 
+       
+//       zl=0x20;             //half space
+//       wrd(zl);
+         
+        zl=0x38;             //8
+        wr_lcd(1,zl);
+        //Val_ShortPinNum2 = 8;  //置一下Val_ShortPinNum2,帮助显示Vprob时的标志位判断
+       
+//       zl=0x30;             //0
+//       wr_lcd(1,zl);
+//       
+//       zl=0x2E;              //.   
+//       wr_lcd(1,zl);    
+//       
+//       t=testdata*100;
+//       j=(int)t/10;
+//       wr_lcd(1,a[j]);
+//		   i=0; 
+//		   
+//       jj=t%10;        
+//       wr_lcd(1,a[jj]); 
+//	     zl=zl;
+         
+            }
+    
+    else if (testdata>=1 && testdata<=9.9)
+    	 {        	 	           
+    	  zl=showadd;       //ddram add 
+    	  wr_lcd(0,zl);
+    	  delay(0x01);
+    	  
+//    	  zl=0x20;          //half space
+//    	  WrData(zl);
+    	  
+    	  t=testdata*10; 
+    	  n=(int)t/10;
+    	  wr_lcd(1,a[n]);
+		    i=0;              //i clear
+    	  
+//    	  zl=0x2E;          //.
+//    	  wr_lcd(1,zl);             
+//    	
+//    	  j=t%10;           //	  
+//		    wr_lcd(1,a[j]); 
+//		    zl=zl;
+    	  }
+       
+    
+    else if (testdata>=10 && testdata<=99.90)
+    {	
+       zl=showadd;       //ddram add 
+       wr_lcd(0,zl);
+       delay(0x01);
+       
+	     t=testdata*10;
+	     m=(int)t/100;
+       wr_lcd(1,a[m]);
+       
+       h=t%100;
+       n=(int)h/10;
+       wr_lcd(1,a[n]); 
+     
+//       zl=0x2E;          //.
+//       wr_lcd(1,zl);
+//       
+//       j=h%10;
+//       wr_lcd(1,a[j]);
+//       zl=zl;
+   	   }
+   
+//   else if (testdata>=100 && testdata<=199.9)
+//   	{
+//   		zl=showadd;
+//   		wr_lcd(0,zl);
+//   		delay(0x01); 
+//   		
+//   		t=testdata*10;
+//   		l=(int)t/1000;
+//   		wr_lcd(1,a[l]);           //百位
+//   	  
+//   	  k=t%1000;
+//   		m=(int)k/100;
+//   		wr_lcd(1,a[m]);           //十位
+//   		
+//   		h=k%100;
+//   		n=(int)h/10;
+//   		wr_lcd(1,a[n]);           //个位
+//   		
+//   		zl=0x2E;          //.
+//      wr_lcd(1,zl);
+//      
+//      j=h%10;
+//      wr_lcd(1,a[j]);
+//      zl=zl;
+//    
+//   		}   
+      
+    else {zl=showadd;
+    	 wr_lcd(0,zl);
+    	 zl=0xB4;             //错
+    	 wr_lcd(1,zl);
+    	 zl=0xED;
+    	 wr_lcd(1,zl);
+    	 zl=0x21;             //！
+    	 wr_lcd(1,zl);
+    	 } 
+}
+//-----------------------------------------------------------------------------
+// ADC 
+//-----------------------------------------------------------------------------
+void ADC (unsigned char Channel)
+    {
+    	
+    	float  AD_VAL_TEST,AD_VAL;
+      unsigned char xdata YYY;
+      unsigned int xdata ad_arr[20];//,TempData;
+		Channel_Select = Channel; 
+		  AMX0SL = Channel_Select;	// AMUX Channel Select Register
+	   //delaynms(5);
+    AD_VAL=0;
+    AD_VAL_TEST = 0;
+    for( YYY = 0;YYY<20;YYY++) 
+    {
+    ad_arr[YYY]=0;
+    } 
+    YYY=0; 
+    ADCINT = 0; 
+    
+    for(YYY= 0;YYY<20;YYY++)     //AD_TIMES=50  采50次
+    {  
+    ADBUSY = 1;   
+ 
+    delayn_ms(20);  ////////////---------------------------------------------------采样等待
+    while (!ADCINT); 
+ 	  ADCINT = 0;	
+    _nop_();
+    _nop_();
+    _nop_();	           //*AD_POINTER = ADC0
+    ad_arr[YYY]=ADC0;		 
+     }
+    //ADC0 = 0; 
+    for(YYY=0;YYY<20;YYY++) //  for(i = 0;i <AD_TIMES;i++)
+   	{ 
+		AD_VAL_TEST += ad_arr[YYY];
+     }
+ 
+ 	AD_VAL = (AD_VAL_TEST/20);     
+ 	AD_VAL = AD_VAL/4096;
+ 	AD_VAL = AD_VAL*2.43; 
+ 	adtemp = AD_VAL;
+	 } 
+//-----------------------------------------------------------------------------
+void TstShort(float x1,float x2)
+{ float xdata a1,a2;
+	a1 = x1;
+	a2 = x2; 
+	if((adtemp<=a1)||(adtemp>=a2))
+     	{Flag_Short = 1;}
+    }
+//-----------------------------------------------------------------------------
+void Clear()
+{ Led = 1;
+	Flag_Short = 0;
+  Junc_Short = 0;
+  Num_Short = 0;
+  	}
+
+//-----------------------------------------------------------------------------
+void TstA00()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_A,PCA9555A_OutPutPort0,0xfeff);   //写0
+     _nop_(); 
+     delaynms(5);
+     _nop_();
+     
+     choose_chn0();
+     _nop_();
+     delaynms(2);
+     TstA00_2_B00_1();
+               
+     choose_chn1();
+     delaynms(2);
+     if(!(Flag_Short))
+    	{ADC(0x00);
+     		TstShort(2.2,2.60);}	
+  if(!(Flag_Short)) 
+     {ADC(0x01);
+     	TstShort(2.0,2.60);} 
+  if(!(Flag_Short))
+     	{ADC(0x02);
+     	TstShort(2.0,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x03);
+     	TstShort(2.0,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x04);
+     	TstShort(2.0,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x05);
+     	TstShort(2.0,2.60);}
+                  
+     choose_chn2();
+     //delaynms(2);
+     if(!(Flag_Short))
+    	{ADC(0x00);
+     		TstShort(2.2,2.60);}	
+  if(!(Flag_Short)) 
+     {ADC(0x01);
+     	TstShort(2.0,2.60);} 
+  if(!(Flag_Short))
+     	{ADC(0x02);
+     	TstShort(2.0,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x03);
+     	TstShort(2.0,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x04);
+     	TstShort(2.0,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x05);
+     	TstShort(2.0,2.60);}
+     
+              
+     choose_chn3();
+     //delaynms(2);
+     TstA00_1();
+               		
+     choose_chn4();
+     //delaynms(2);
+     TstA00_1();
+               
+     choose_chn5();
+     //delaynms(2);
+     TstA00_1();
+                         
+     choose_chn6();
+    // delaynms(2);
+     TstA00_1();
+                        
+     choose_chn7();
+     //delaynms(2);
+     TstA00_1();
+              
+     choose_chn8();
+     if(!(Flag_Short))
+    	{ADC(0x00);
+     		TstShort(2.0,2.60);}	
+  if(!(Flag_Short)) 
+     {ADC(0x01);
+     	TstShort(1.8,2.60);} 
+  if(!(Flag_Short))
+     	{ADC(0x02);
+     	TstShort(2.0,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x03);
+     	TstShort(2.0,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x04);
+     	TstShort(2.0,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x05);
+     	TstShort(2.0,2.60);}
+          
+     choose_chn9();
+     //delaynms(2);
+     TstA00_1();
+            
+      choose_chn10();
+      if(!(Flag_Short))
+    	{ADC(0x00);
+     		TstShort(1.4,2.60);}	
+  if(!(Flag_Short)) 
+     {ADC(0x01);
+     	TstShort(2.0,2.60);} 
+  if(!(Flag_Short))
+     	{ADC(0x02);
+     	TstShort(2.0,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x03);
+     	TstShort(2.0,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x04);
+     	TstShort(2.0,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x05);
+     	TstShort(2.0,2.60);}
+                 
+     choose_chn11();
+     //delaynms(2);
+     TstA00_1();
+               
+     choose_chn12();
+     //delaynms(2);
+     TstA00_1();
+               
+     choose_chn13();
+     //delaynms(2);
+     TstA00_1();
+              
+     choose_chn14();
+     //delaynms(2);
+     TstA00_1();
+              
+     choose_chn15();
+     _nop_();
+     //delaynms(2);
+     TstA00_1();
+     
+     if(Flag_Short)
+		{Junc_Short = 1;
+			Num_Short = 1; }     
+	}
+}
+//-----------------------------------------------------------------------------
+void TstA01()
+{
+	if(!(Flag_Short))
+		{
+	
+	SM_Send(CHIP_A,PCA9555A_OutPutPort0,0xfdff);   //写0
+     delaynms(2);
+     _nop_();
+     
+     
+     choose_chn0();
+     _nop_();
+     TstA00_2_B00_1();
+        	
+     choose_chn1();
+     _nop_();
+     //delaynms(2); 
+     TstA00_2_B00_1();
+             
+     choose_chn2();
+     if(!(Flag_Short))
+    	{ADC(0x00);
+     		TstShort(1.8,2.2);}	
+     if(!(Flag_Short)) 
+     {ADC(0x01);
+     	TstShort(2.2,2.60);}
+     if(!(Flag_Short))
+     	{ADC(0x02);
+     	TstShort(2.2,2.60);}
+     if(!(Flag_Short))
+     	{ADC(0x03);
+     	TstShort(2.2,2.60);}
+     if(!(Flag_Short))
+     	{ADC(0x04);
+     	TstShort(2.2,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x05);
+     	TstShort(2.2,2.60);}
+              
+     choose_chn3();
+     TstA00_1();
+          
+     choose_chn4();
+     TstA00_1();
+          
+     choose_chn5();
+     TstA00_1();
+               
+     choose_chn6();
+     TstA00_1();
+                    
+     choose_chn7();
+     TstA00_1();
+                  
+     choose_chn8();
+     TstA00_1();
+               
+     choose_chn12();
+     _nop_();
+     TstA00_1();
+               
+     choose_chn13();
+     TstA00_1();
+               
+     choose_chn14();
+     _nop_();
+     TstA00_1();
+               
+     choose_chn15();
+     _nop_();
+     TstA00_1();
+          		
+	if(Flag_Short)
+		{Junc_Short = 1;
+			Num_Short = 2;}
+    }
+}
+//-----------------------------------------------------------------------------
+void TstA02()
+{
+	if(!(Flag_Short))
+		{
+	
+	SM_Send(CHIP_A,PCA9555A_OutPutPort0,0xfbff);   //写0
+     delaynms(2);
+     _nop_();
+     
+     choose_chn0();
+     TstA00_2_B00_1(); 
+               	
+     choose_chn1();
+     TstA00_2_B00_1();
+             
+     choose_chn2();
+     delaynms(2);
+     TstA00_2_B00_1();
+              
+     choose_chn3();
+     TstA00_1();
+          
+     choose_chn4();
+     TstA00_1();
+          
+     choose_chn5();
+     TstA00_1();
+               
+     choose_chn6();
+     TstA00_1();
+                    
+     choose_chn7();
+     TstA00_1();
+                  
+     choose_chn8(); 
+     TstA00_1();
+               
+     choose_chn9();
+     TstA00_1();
+             
+      choose_chn10();
+      if(!(Flag_Short))
+    	{ADC(0x00);
+     		TstShort(2.05,2.60);}	
+     if(!(Flag_Short)) 
+     {ADC(0x01);
+     	TstShort(1.8,2.20);}
+     if(!(Flag_Short))
+     	{ADC(0x02);
+     	TstShort(2.05,2.60);}
+     if(!(Flag_Short))
+     	{ADC(0x03);
+     	TstShort(2.05,2.60);}
+     if(!(Flag_Short))
+     	{ADC(0x04);
+     	TstShort(2.05,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x05);
+     	TstShort(2.05,2.60);}
+               
+     choose_chn11();
+     TstA00_1();
+               
+     choose_chn12();
+     TstA00_1();
+               
+     choose_chn13();
+     TstA00_1();
+               
+     choose_chn14();
+     TstA00_1();
+               
+     choose_chn15();
+     TstA00_1();
+          
+	if(Flag_Short)
+		{Junc_Short = 1;
+			Num_Short = 3;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstA03()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_A,PCA9555A_OutPutPort0,0xf7ff);   //写0
+     delaynms(2);
+     _nop_();
+     
+     choose_chn0();
+     TstA00_2_B00_1();
+               	
+     choose_chn1();
+     TstA00_2_B00_1();
+             
+     choose_chn2();
+     delaynms(2);
+     TstA00_2_B00_1();
+              
+     choose_chn3();
+     _nop_();
+     TstA00_2_B00_1();
+          
+     choose_chn4();
+     TstA00_1();
+          
+     choose_chn5();
+     TstA00_1();
+               
+     choose_chn6();
+     TstA00_1();
+                    
+     choose_chn7();
+     TstA00_1();
+                 
+     choose_chn8();
+     TstA00_1();
+               
+     choose_chn9();
+     TstA00_1();
+             
+      choose_chn10();
+     TstA00_1();
+               
+     choose_chn11();
+     TstA00_1();
+               
+     choose_chn12();
+    TstA00_1();
+               
+     choose_chn13();
+     TstA00_1();
+               
+     choose_chn14();
+     TstA00_1();
+               
+     choose_chn15();
+     TstA00_1();
+	   	   
+	if(Flag_Short)
+		{Junc_Short = 1;
+			Num_Short = 4;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstA04()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_A,PCA9555A_OutPutPort0,0xefff);   //写0
+     delaynms(2);
+    _nop_();
+     
+     choose_chn0();
+     TstA00_2_B00_1();
+               	
+     choose_chn1();
+     TstA00_2_B00_1();
+             
+     choose_chn2();
+     TstA00_2_B00_1();
+              
+     choose_chn3();
+     _nop_();
+     TstA00_2_B00_1();
+          
+     choose_chn4();
+     _nop_();
+     TstA00_2_B00_1();
+          
+     choose_chn5();
+     TstA00_1();
+         
+     choose_chn6();
+     TstA00_1();
+                    
+     choose_chn7();
+     TstA00_1();
+                  
+     choose_chn8();
+     TstA00_1();
+           
+     choose_chn9();
+     TstA00_1();
+             
+      choose_chn10();
+     TstA00_1();
+               
+     choose_chn11();
+     TstA00_1();
+               
+     choose_chn12();
+     TstA00_1();
+               
+     choose_chn13();
+     TstA00_1();
+               
+     choose_chn14();
+     TstA00_1();
+               
+     choose_chn15();
+     TstA00_1();
+          		
+     if(Flag_Short)
+		{Junc_Short = 1;
+			Num_Short =5;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstA05()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_A,PCA9555A_OutPutPort0,0xdfff);   //写0
+     delaynms(2);
+     _nop_();
+     
+     choose_chn0();
+     TstA00_2_B00_1();
+               	
+     choose_chn1();
+     TstA00_2_B00_1();
+             
+     choose_chn2();
+     TstA00_2_B00_1();
+              
+     choose_chn3();
+     TstA00_2_B00_1();
+          
+     choose_chn4();
+     _nop_();
+    TstA00_2_B00_1();
+         
+     choose_chn5();
+     TstA00_2_B00_1();
+              
+     choose_chn6();
+     TstA00_1();
+                    
+     choose_chn7();
+     TstA00_1();
+             
+     choose_chn8();
+     TstA00_1();
+               
+     choose_chn9();
+     TstA00_1();
+             
+      choose_chn10();
+     TstA00_1();
+               
+     choose_chn11();
+     TstA00_1();
+               
+     choose_chn12();
+     TstA00_1();
+     	
+	if(Flag_Short)
+		{Junc_Short = 1;
+			Num_Short = 6;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstA06()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_A,PCA9555A_OutPutPort0,0xbfff);   //写0
+     delaynms(2);
+     _nop_();
+     
+     choose_chn0();
+     TstA00_2_B00_1();
+               	
+     choose_chn1();
+     TstA00_2_B00_1();
+             
+     choose_chn2();
+     TstA00_2_B00_1();
+              
+     choose_chn3();
+     TstA00_2_B00_1();
+         
+     choose_chn4();
+     TstA00_2_B00_1();
+          
+     choose_chn5();
+     TstA00_2_B00_1();
+               
+     choose_chn6();
+     TstA00_2_B00_1();
+                    
+     choose_chn7();
+     TstA00_1();
+             
+     choose_chn8();
+     TstA00_1();
+         
+     choose_chn9();
+     TstA00_1();
+             
+      choose_chn10();
+     TstA00_1();
+               
+     choose_chn11();
+     TstA00_1();
+               
+     choose_chn12();
+     TstA00_1();
+               
+     choose_chn13();
+     TstA00_1();
+               
+     choose_chn14();
+     TstA00_1();
+               
+     choose_chn15();
+     TstA00_1();
+     	
+	if(Flag_Short)
+		{Junc_Short = 1;
+			Num_Short = 7;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstA07()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_A,PCA9555A_OutPutPort0,0x7fff);   //写0
+	 
+     delaynms(2);
+     _nop_();
+     
+     choose_chn0();
+     TstA00_2_B00_1();
+               	
+     choose_chn1();
+     TstA00_2_B00_1();
+             
+     choose_chn2();
+     TstA00_2_B00_1();
+              
+     choose_chn3();
+     TstA00_2_B00_1();
+          
+     choose_chn4();
+     TstA00_2_B00_1();
+          
+     choose_chn5();
+     TstA00_2_B00_1();
+               
+     choose_chn6();
+     TstA00_2_B00_1();
+                    
+     choose_chn7();
+     	TstA00_2_B00_1();
+              
+     choose_chn8();
+     TstA00_1();
+               
+     choose_chn9();
+     TstA00_1();
+             
+      choose_chn10();
+     TstA00_1();
+               
+     choose_chn11();
+     TstA00_1();
+               
+     choose_chn12();
+     TstA00_1();
+               
+     choose_chn13();
+     TstA00_1();
+               
+     choose_chn14();
+     TstA00_1();
+               
+     choose_chn15();
+     TstA00_1();
+     	
+	if(Flag_Short)
+		{Junc_Short = 1;
+			Num_Short = 8;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstA10()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_A,PCA9555A_OutPutPort0,0xfffe);   //写0
+     delaynms(2);
+     _nop_();
+     
+     choose_chn0();
+     TstA00_2_B00_1();
+               	
+     choose_chn1();
+    TstA00_2_B00_1();
+            
+     choose_chn2();
+     TstA00_2_B00_1();
+              
+     choose_chn3();
+     TstA00_2_B00_1();
+     
+     choose_chn4();
+     TstA00_2_B00_1();
+          
+     choose_chn5();
+     TstA00_2_B00_1();
+               
+     choose_chn6();
+    TstA00_2_B00_1();
+                   
+     choose_chn7();
+     TstA00_2_B00_1();
+             
+     choose_chn8();
+     TstA00_2_B00_1();
+               
+     choose_chn9();
+     TstA00_1();
+     
+      choose_chn10();
+     TstA00_1();
+               
+     choose_chn11();
+     TstA00_1();
+               
+     choose_chn12();
+     TstA00_1();
+               
+     choose_chn13();
+     TstA00_1();
+               
+     choose_chn14();
+     TstA00_1();
+               
+     choose_chn15();
+     TstA00_1();
+     	
+	if(Flag_Short)
+		{Junc_Short = 1;
+			Num_Short = 9;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstA11()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_A,PCA9555A_OutPutPort0,0xfffd);   //写0
+     delaynms(2);
+     _nop_();
+     
+     choose_chn0();
+     TstA00_2_B00_1();
+               	
+     choose_chn1();
+     TstA00_2_B00_1();
+             
+     choose_chn2();
+     TstA00_2_B00_1();
+     
+     choose_chn3();
+     TstA00_2_B00_1();
+     
+     choose_chn4();
+     TstA00_2_B00_1();
+     
+     choose_chn5();
+     TstA00_2_B00_1();
+     
+     choose_chn6();
+     TstA00_2_B00_1();
+     
+     choose_chn7();
+     TstA00_2_B00_1();
+     
+     choose_chn8();
+     TstA00_2_B00_1();
+     
+     choose_chn9();
+     TstA00_2_B00_1();
+     
+      choose_chn10();
+    TstA00_1();
+      
+     choose_chn11();
+     TstA00_1();
+   
+     choose_chn12();
+     TstA00_1();
+    
+     
+     choose_chn14();
+     TstA00_1();
+    
+     choose_chn15();
+     TstA00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 1;
+			Num_Short = 10;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstA12()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_A,PCA9555A_OutPutPort0,0xfffb);   //写0
+     delaynms(2);
+     _nop_();
+     
+     choose_chn0();
+     TstA00_2_B00_1();
+               	
+     choose_chn1();
+     TstA00_2_B00_1();
+     
+     choose_chn2();
+     TstA00_2_B00_1();
+    
+     choose_chn3();
+     TstA00_2_B00_1();
+     
+     choose_chn4();
+     TstA00_2_B00_1();
+     
+     choose_chn5();
+     TstA00_2_B00_1();
+     
+     choose_chn6();
+     TstA00_2_B00_1();
+             
+     choose_chn7();
+     TstA00_2_B00_1();
+     
+     choose_chn8();
+     TstA00_2_B00_1();
+     
+     choose_chn9();
+     TstA00_2_B00_1();
+     
+      choose_chn10();
+     TstA00_2_B00_1();
+     
+     choose_chn11();
+     TstA00_1();
+    
+     choose_chn12();
+     TstA00_1();
+    
+     choose_chn13();
+     TstA00_1();
+     
+     choose_chn14();
+     TstA00_1();
+     
+     choose_chn15();
+     TstA00_1();
+    
+	if(Flag_Short)
+		{Junc_Short = 2;
+			Num_Short = 1;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstA13()
+{
+	if(!(Flag_Short))
+		{
+	   SM_Send(CHIP_A,PCA9555A_OutPutPort0,0xfff7);   //写0
+	     _nop_();
+     delaynms(2);
+     _nop_();
+    
+     choose_chn0(); 
+     TstA00_2_B00_1();
+      	
+     choose_chn1();
+     TstA00_2_B00_1();
+     
+     choose_chn2();
+     TstA00_2_B00_1();
+     
+     choose_chn3();
+     TstA00_2_B00_1();
+     
+     choose_chn4();
+     TstA00_2_B00_1();
+     
+     choose_chn5();
+     TstA00_2_B00_1();
+      
+     choose_chn6();
+     TstA00_2_B00_1();
+         
+     choose_chn7();
+     TstA00_2_B00_1();
+     
+     choose_chn8();
+     TstA00_2_B00_1();
+     
+     choose_chn9();
+     TstA00_2_B00_1();
+     
+      choose_chn10();
+     TstA00_2_B00_1();
+      
+     choose_chn11();
+     TstA00_2_B00_1();
+     //delaynms(200);
+    
+     choose_chn12();
+     //delaynms(10);
+     TstA00_1();
+     
+     choose_chn13();
+     //delaynms(200);
+     TstA00_1();
+      
+     choose_chn14();
+     TstA00_1();
+     
+     choose_chn15();
+     TstA00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 2;
+			Num_Short = 2;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstA14()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_A,PCA9555A_OutPutPort0,0xffef);   //写0
+     delaynms(2);
+     _nop_();
+     
+     choose_chn0();
+     TstA00_2_B00_1();
+    	
+     choose_chn1();
+     TstA00_2_B00_1();
+     
+     choose_chn2();
+    TstA00_2_B00_1();
+    
+     choose_chn3();
+     TstA00_2_B00_1();
+     
+     choose_chn4();
+     TstA00_2_B00_1();
+     
+     choose_chn5();
+     TstA00_2_B00_1();
+      
+     choose_chn6();
+    TstA00_2_B00_1();
+          
+     choose_chn7();
+     TstA00_2_B00_1();
+     
+     choose_chn8();
+     TstA00_2_B00_1();
+     
+     choose_chn9();
+     TstA00_2_B00_1();
+    
+      choose_chn10();
+     TstA00_2_B00_1();
+      
+     choose_chn11();
+     TstA00_2_B00_1();
+     
+     choose_chn12();
+     TstA00_2_B00_1();
+      
+     choose_chn13();
+     //delaynms(20);
+     TstA00_1();
+     
+     choose_chn14();
+     TstA00_1();
+     
+     choose_chn15();
+     TstA00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 2;
+			Num_Short = 3;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstA15()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_A,PCA9555A_OutPutPort0,0xffdf);   //写0
+     delaynms(2);
+     _nop_();
+     
+     choose_chn0();
+     TstA00_2_B00_1();
+     	
+     choose_chn1();
+    TstA00_2_B00_1();
+   
+     choose_chn2();
+     TstA00_2_B00_1();
+      
+     choose_chn3();
+     TstA00_2_B00_1();
+    
+     choose_chn4();
+     TstA00_2_B00_1();
+     
+     choose_chn5();
+     TstA00_2_B00_1();
+       
+     choose_chn6();
+     TstA00_2_B00_1();
+           
+     choose_chn7();
+     TstA00_2_B00_1();
+     
+     choose_chn8();
+     TstA00_2_B00_1();
+        
+     choose_chn9();
+     TstA00_2_B00_1();
+     
+      choose_chn10();
+     TstA00_2_B00_1();
+     
+     choose_chn11();
+     TstA00_2_B00_1();
+       
+     choose_chn12();
+     TstA00_2_B00_1();
+       
+     choose_chn13();
+     TstA00_2_B00_1();
+    
+     choose_chn14();
+     if(!(Flag_Short))
+    	{ADC(0x00);
+     		TstShort(1.5,1.7);}	
+     if(!(Flag_Short)) 
+     {ADC(0x01);
+     	TstShort(2.05,2.60);}
+     if(!(Flag_Short))
+     	{ADC(0x02);
+     	TstShort(2.05,2.60);}
+     if(!(Flag_Short))
+     	{ADC(0x03);
+     	TstShort(2.05,2.60);}
+     if(!(Flag_Short))
+     	{ADC(0x04);
+     	TstShort(2.05,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x05);
+     	TstShort(2.05,2.60);}
+     	
+     choose_chn15();
+     TstA00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 2;
+			Num_Short = 4;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstA16()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_A,PCA9555A_OutPutPort0,0xffbf);   //写0
+     delaynms(2);
+     _nop_();
+     
+     choose_chn0();
+     TstA00_2_B00_1();
+     	
+     choose_chn1();
+     TstA00_2_B00_1();
+     
+     choose_chn2();
+     TstA00_2_B00_1();
+    
+     choose_chn3();
+     TstA00_2_B00_1();
+     
+     choose_chn4();
+     TstA00_2_B00_1();
+     
+     choose_chn5();
+     TstA00_2_B00_1();
+     
+     choose_chn6();
+     TstA00_2_B00_1();
+         
+     choose_chn7();
+     TstA00_2_B00_1();
+     
+     choose_chn8();
+     TstA00_2_B00_1();
+     
+     choose_chn9();
+     TstA00_2_B00_1();
+     
+      choose_chn10();
+     TstA00_2_B00_1();
+    
+     choose_chn11();
+     TstA00_2_B00_1();
+     
+     choose_chn12();
+     TstA00_2_B00_1();
+     
+     choose_chn13();
+     TstA00_2_B00_1();
+     
+     choose_chn14();
+     TstA00_2_B00_1();
+     
+     choose_chn15();
+     TstA00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 2;
+			Num_Short = 5;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstA17()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_A,PCA9555A_OutPutPort0,0xff7f);   //写0
+     delaynms(2);
+     _nop_(); 
+     
+     choose_chn0();
+     TstA00_2_B00_1();
+     	
+     choose_chn1();
+    TstA00_2_B00_1();
+    
+     choose_chn2();
+      TstA00_2_B00_1();
+      
+     choose_chn3();
+     TstA00_2_B00_1();
+     
+     choose_chn4();
+    TstA00_2_B00_1();
+    
+     choose_chn5();
+     TstA00_2_B00_1();
+     
+     choose_chn6();
+    TstA00_2_B00_1();
+       
+     choose_chn7();
+     TstA00_2_B00_1();
+    
+     choose_chn8();
+    TstA00_2_B00_1();
+    
+     choose_chn9();
+     TstA00_2_B00_1();
+    
+      choose_chn10();
+     if(!(Flag_Short))
+    {ADC(0x01);
+     TstShort(2.2,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x02);
+     		TstShort(2.2,2.60);}
+  if(!(Flag_Short))
+   	{ADC(0x03);
+     TstShort(2.2,2.60); }
+  if(!(Flag_Short))
+     	{ADC(0x04);
+     	TstShort(2.1,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x05);
+     	TstShort(2.2,2.60);}
+     
+     choose_chn11();
+     if(!(Flag_Short)) 
+     {ADC(0x01);
+     	TstShort(1.8,2.2);}
+     if(!(Flag_Short))
+     	{ADC(0x02);
+     	TstShort(2.05,2.60);}
+     if(!(Flag_Short))
+     	{ADC(0x03);
+     	TstShort(2.05,2.60);}
+     if(!(Flag_Short))
+     	{ADC(0x04);
+     	TstShort(2.05,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x05);
+     	TstShort(2.05,2.60);}
+     
+     choose_chn12();
+     TstA00_2_B00_1();
+      
+     choose_chn13();
+     TstA00_2_B00_1();
+     
+     choose_chn14();
+     TstA00_2_B00_1();
+      
+     choose_chn15();
+     TstA00_2_B00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 2;
+			Num_Short = 6;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstB00()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_B,PCA9555A_OutPutPort0,0xfeff);   //写0
+     delaynms(2); 
+      _nop_();
+    
+     choose_chn0(); 
+     _nop_();
+     TstB00_2_C00_1();
+     	
+     choose_chn1();
+     TstA00_2_B00_1();
+      
+     choose_chn2();
+     TstA00_2_B00_1();
+     
+     choose_chn3();
+     TstA00_2_B00_1();
+     
+     choose_chn4();
+     TstA00_2_B00_1();
+     
+     choose_chn5();
+     TstA00_2_B00_1();
+      
+     choose_chn6();
+     TstA00_2_B00_1();
+          
+     choose_chn7();
+     TstA00_2_B00_1();
+     
+     choose_chn8();
+     TstA00_2_B00_1();
+     
+     choose_chn9();
+     TstA00_2_B00_1();
+     
+      choose_chn10();
+     TstA00_2_B00_1();
+      
+     choose_chn11();
+     TstA00_2_B00_1();
+      
+     choose_chn12();
+     TstA00_2_B00_1();
+        
+     choose_chn13();
+     TstA00_2_B00_1();
+     
+     choose_chn14();
+     TstA00_2_B00_1(); 
+     
+     choose_chn15();
+     TstA00_2_B00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 2;
+			Num_Short = 10;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstB01()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_A,PCA9555A_OutPutPort0,0xfdff);   //写0
+     delaynms(2);
+     _nop_();
+     
+     choose_chn0();
+     //_nop_();
+     TstB00_2_C00_1();
+       	
+     choose_chn1();
+     delaynms(2);
+     TstB00_2_C00_1();
+     
+     choose_chn2();
+     TstA00_2_B00_1();
+     
+     choose_chn3();
+     TstA00_2_B00_1();
+     
+     choose_chn4();
+     TstA00_2_B00_1();
+     
+     choose_chn5();
+     TstA00_2_B00_1();
+     
+     choose_chn6();
+     TstA00_2_B00_1();
+       
+     choose_chn7();
+     TstA00_2_B00_1();
+     
+     choose_chn8();
+     TstA00_2_B00_1();
+     
+     choose_chn9();
+     TstA00_2_B00_1();
+     
+      choose_chn10();
+     if(!(Flag_Short)) 
+     {ADC(0x01);
+     	TstShort(1.8,2.2);}
+     if(!(Flag_Short))
+     	{ADC(0x02);
+     	TstShort(2.05,2.60);}
+     if(!(Flag_Short))
+     	{ADC(0x03);
+     	TstShort(2.05,2.60);}
+     if(!(Flag_Short))
+     	{ADC(0x04);
+     	TstShort(2.05,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x05);
+     	TstShort(2.05,2.60);}
+    
+     choose_chn11();
+     TstA00_2_B00_1();
+      
+     choose_chn12();
+     TstA00_2_B00_1();
+     
+     choose_chn13();
+     TstA00_2_B00_1();
+     
+     choose_chn14();
+     TstA00_2_B00_1();
+     
+     choose_chn15();
+     TstA00_2_B00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 2;
+			Num_Short = 11;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstB02()
+{if(!(Flag_Short))
+	{
+	SM_Send(CHIP_A,PCA9555A_OutPutPort0,0xfbff);   //写0
+     delaynms(2);
+     _nop_();
+     choose_chn0();
+     TstB00_2_C00_1();
+        	
+     choose_chn1();
+     delaynms(2);
+     TstB00_2_C00_1();
+     
+     choose_chn2();
+     _nop_();
+     TstB00_2_C00_1();
+       
+     choose_chn3();
+     TstA00_2_B00_1();
+     
+     choose_chn4();
+     TstA00_2_B00_1();
+     
+     choose_chn5();
+     TstA00_2_B00_1();
+     
+     choose_chn6();
+     TstA00_2_B00_1();
+        
+     choose_chn7();
+     TstA00_2_B00_1();
+    
+     choose_chn8();
+     TstA00_2_B00_1();
+      
+     choose_chn9();
+    TstA00_2_B00_1();
+    
+      choose_chn10();
+     if(!(Flag_Short)) 
+     {ADC(0x01);
+     	TstShort(1.8,2.2);}
+     if(!(Flag_Short))
+     	{ADC(0x02);
+     	TstShort(2.05,2.60);}
+     if(!(Flag_Short))
+     	{ADC(0x03);
+     	TstShort(2.05,2.60);}
+     if(!(Flag_Short))
+     	{ADC(0x04);
+     	TstShort(2.05,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x05);
+     	TstShort(2.05,2.60);}
+    
+     choose_chn11();
+     TstA00_2_B00_1();
+      
+     choose_chn12();
+     TstA00_2_B00_1();
+       
+     choose_chn13();
+     TstA00_2_B00_1();
+      
+     choose_chn14();
+     TstA00_2_B00_1();
+     
+     choose_chn15();
+     TstA00_2_B00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 2;
+			Num_Short = 12;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstB03()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_A,PCA9555A_OutPutPort0,0xf7ff);   //写0
+     delaynms(2);
+     _nop_();
+     choose_chn0();
+     TstB00_2_C00_1();
+     
+     choose_chn1();
+     TstB00_2_C00_1();
+     
+     choose_chn2();
+     _nop_();
+     TstB00_2_C00_1();
+    
+     choose_chn3();
+     TstB00_2_C00_1();
+     
+     choose_chn4();
+     TstA00_2_B00_1();
+     
+     choose_chn5();
+     TstA00_2_B00_1();
+     
+     choose_chn6();
+     TstA00_2_B00_1();
+          
+     choose_chn7();
+     TstA00_2_B00_1();
+     
+     choose_chn8();
+     TstA00_2_B00_1();
+     
+     choose_chn9();
+     TstA00_2_B00_1();
+     
+      choose_chn10();
+     if(!(Flag_Short))
+    {ADC(0x01);
+     TstShort(2.2,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x02);
+     		TstShort(2.2,2.60);}
+  if(!(Flag_Short))
+   	{ADC(0x03);
+     TstShort(2.2,2.60); }
+  if(!(Flag_Short))
+     	{ADC(0x04);
+     	TstShort(2.1,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x05);
+     	TstShort(2.2,2.60);}
+     
+     choose_chn11();
+     if(!(Flag_Short))
+    {ADC(0x01);
+     TstShort(2.1,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x02);
+     		TstShort(2.2,2.60);}
+  if(!(Flag_Short))
+   	{ADC(0x03);
+     TstShort(2.2,2.60); }
+  if(!(Flag_Short))
+     	{ADC(0x04);
+     	TstShort(2.2,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x05);
+     	TstShort(2.2,2.60);}
+     
+     choose_chn12();
+     TstA00_2_B00_1();
+     
+     choose_chn13();
+     TstA00_2_B00_1();
+     
+     choose_chn14();
+     TstA00_2_B00_1();
+     
+     choose_chn15();
+     TstA00_2_B00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 2;
+			Num_Short = 13;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstB04()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_A,PCA9555A_OutPutPort0,0xefff);   //写0
+     delaynms(2);
+     _nop_();
+     choose_chn0();
+     TstB00_2_C00_1();
+      	
+     choose_chn1();
+     TstB00_2_C00_1();
+     
+     choose_chn2();
+     TstB00_2_C00_1();
+     
+     choose_chn3();
+     TstB00_2_C00_1();
+     
+     choose_chn4();
+     TstB00_2_C00_1();
+     
+     choose_chn5();
+     TstA00_2_B00_1();
+     
+     choose_chn6();
+     TstA00_2_B00_1();
+       
+     choose_chn7();
+     TstA00_2_B00_1();
+     
+     choose_chn8();
+     TstA00_2_B00_1();
+       
+     choose_chn9();
+     TstA00_2_B00_1();
+     
+      choose_chn10();
+     TstA00_2_B00_1();
+       
+     choose_chn11();
+    TstA00_2_B00_1();
+     
+     choose_chn12();
+    TstA00_2_B00_1();
+       
+     choose_chn13();
+    TstA00_2_B00_1();
+       
+     choose_chn14();
+     TstA00_2_B00_1();
+      
+     choose_chn15();
+     TstA00_2_B00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 2;
+			Num_Short = 14;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstB05()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_A,PCA9555A_OutPutPort0,0xdfff);   //写0
+     delaynms(2);
+     _nop_();
+     choose_chn0();
+     TstB00_2_C00_1();
+       	
+     choose_chn1();
+     TstB00_2_C00_1();
+       
+     choose_chn2();
+     TstB00_2_C00_1();
+        
+     choose_chn3();
+     TstB00_2_C00_1();
+     
+     choose_chn4();
+     TstB00_2_C00_1();
+     
+     choose_chn5();
+     TstB00_2_C00_1();
+       
+     choose_chn6();
+     TstA00_2_B00_1();
+           
+     choose_chn7();
+     TstA00_2_B00_1();
+     
+     choose_chn8();
+     TstA00_2_B00_1();
+     
+     choose_chn9();
+     TstA00_2_B00_1();
+     
+     choose_chn10();
+     TstA00_2_B00_1();  
+      
+     choose_chn11();
+     TstA00_2_B00_1();
+       
+     choose_chn12();
+     TstA00_2_B00_1();
+       
+     choose_chn13();
+     TstA00_2_B00_1();
+        
+     choose_chn14();
+     TstA00_2_B00_1();
+      
+     choose_chn15();
+     TstA00_2_B00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 3;
+			Num_Short = 1;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstB06()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_A,PCA9555A_OutPutPort0,0xbfff);   //写0
+     delaynms(2);
+     _nop_();
+     choose_chn0();
+     TstB00_2_C00_1();
+       	
+     choose_chn1();
+     TstB00_2_C00_1();
+     
+     choose_chn2();
+     TstB00_2_C00_1();
+      
+     choose_chn3();
+     TstB00_2_C00_1();
+     
+     choose_chn4();
+     TstB00_2_C00_1();
+     
+     choose_chn5();
+     TstB00_2_C00_1();
+       
+     choose_chn6();
+     delaynms(2);
+     TstB00_2_C00_1();
+             
+     choose_chn7();
+     TstA00_2_B00_1();
+     
+     choose_chn8();
+     TstA00_2_B00_1();
+      
+     choose_chn9();
+     TstA00_2_B00_1();
+     
+      choose_chn10();
+     TstA00_2_B00_1();
+     
+     choose_chn11();
+    TstA00_2_B00_1();
+      
+     choose_chn12();
+    TstA00_2_B00_1();
+    
+     choose_chn13();
+     TstA00_2_B00_1();
+       
+     choose_chn14();
+     TstA00_2_B00_1();
+      
+     choose_chn15();
+    TstA00_2_B00_1();
+    
+	if(Flag_Short)
+		{Junc_Short = 3;
+			Num_Short = 2;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstB07()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_A,PCA9555A_OutPutPort0,0x7fff);   //写0
+     delaynms(2);
+     _nop_();
+     choose_chn0();
+     TstB00_2_C00_1();
+     	
+     choose_chn1();
+     TstB00_2_C00_1();
+     
+     choose_chn2();
+     TstB00_2_C00_1();
+     
+     choose_chn3();
+     TstB00_2_C00_1();
+     
+     choose_chn4();
+     TstB00_2_C00_1();
+     
+     choose_chn5();
+     TstB00_2_C00_1();
+        
+     choose_chn6();
+     delaynms(2);
+     TstB00_2_C00_1();
+              
+     choose_chn7();
+     TstB00_2_C00_1();
+     
+     choose_chn8();
+    TstA00_2_B00_1();
+     
+     choose_chn9();
+    TstA00_2_B00_1();
+     
+      choose_chn10();
+    TstA00_2_B00_1();
+      
+     choose_chn11();
+     TstA00_2_B00_1();
+     
+     choose_chn12();
+     TstA00_2_B00_1();
+     
+     choose_chn13();
+     TstA00_2_B00_1();
+     
+     choose_chn14();
+     TstA00_2_B00_1();
+     
+     choose_chn15();
+     TstA00_2_B00_1();
+     	
+	if(Flag_Short)
+		{Junc_Short = 3;
+			Num_Short = 3;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstB10()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_A,PCA9555A_OutPutPort0,0xfffe);   //写0
+     delaynms(2);
+     _nop_();
+     choose_chn0();
+     TstB00_2_C00_1();
+     
+     choose_chn1();
+     TstB00_2_C00_1();
+     
+     choose_chn2();
+     TstB00_2_C00_1();
+      
+     choose_chn3();
+     TstB00_2_C00_1();
+    
+     choose_chn4();
+     TstB00_2_C00_1();
+     
+     choose_chn5();
+     TstB00_2_C00_1();
+        
+     choose_chn6();
+     TstB00_2_C00_1();
+         
+     choose_chn7();
+     TstB00_2_C00_1();
+     
+     choose_chn8();
+     TstB00_2_C00_1();
+     
+     choose_chn9();
+     TstA00_2_B00_1();
+     
+      choose_chn10();
+    TstA00_2_B00_1();
+    
+     choose_chn11();
+    TstA00_2_B00_1();
+    
+     choose_chn12();
+     TstA00_2_B00_1();
+     
+     choose_chn13();
+     TstA00_2_B00_1();
+      
+     choose_chn14();
+     TstA00_2_B00_1();
+      
+     choose_chn15();
+     TstA00_2_B00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 3;
+			Num_Short = 4;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstB11()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_A,PCA9555A_OutPutPort0,0xfffd);   //写0
+     delaynms(2);
+     _nop_();
+     choose_chn0();
+     TstB00_2_C00_1();
+      	
+     choose_chn1();
+     TstB00_2_C00_1();
+     
+     choose_chn2();
+     TstB00_2_C00_1();
+       
+     choose_chn3();
+     TstB00_2_C00_1();
+     
+     choose_chn4();
+     TstB00_2_C00_1();
+     
+     choose_chn5();
+     TstB00_2_C00_1();
+      
+     choose_chn6();
+     TstB00_2_C00_1();
+           
+     choose_chn7();
+     TstB00_2_C00_1();
+    
+     choose_chn8();
+     TstB00_2_C00_1();
+     
+     choose_chn9();
+     TstB00_2_C00_1();
+     
+      choose_chn10();
+    TstA00_2_B00_1();
+              
+     choose_chn11();
+    TstA00_2_B00_1();
+    
+     choose_chn12();
+     TstA00_2_B00_1();
+       
+     choose_chn13();
+     TstA00_2_B00_1();
+      
+     choose_chn14();
+    TstA00_2_B00_1();
+     
+     choose_chn15();
+     TstA00_2_B00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 3;
+			Num_Short = 5;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstB12()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_A,PCA9555A_OutPutPort0,0xfffb);   //写0
+     delaynms(2);
+     _nop_();
+     choose_chn0();
+     TstB00_2_C00_1();
+        	
+     choose_chn1();
+     TstB00_2_C00_1();
+     
+     choose_chn2();
+     TstB00_2_C00_1();
+      
+     choose_chn3();
+     TstB00_2_C00_1();
+     
+     choose_chn4();
+     TstB00_2_C00_1();
+     
+     choose_chn5();
+     TstB00_2_C00_1();
+       
+     choose_chn6();
+     TstB00_2_C00_1();
+           
+     choose_chn7();
+     TstB00_2_C00_1();
+      
+     choose_chn8();
+     TstB00_2_C00_1();
+      
+     choose_chn9();
+    TstB00_2_C00_1();
+     
+      choose_chn10();
+     TstB00_2_C00_1();
+         
+     choose_chn11();
+    TstA00_2_B00_1();
+        
+     choose_chn12();
+    TstA00_2_B00_1();
+      
+     choose_chn13();
+    TstA00_2_B00_1();
+       
+     choose_chn14();
+     TstA00_2_B00_1();
+       
+     choose_chn15();
+    TstA00_2_B00_1();
+    
+	if(Flag_Short)
+		{Junc_Short = 3;
+			Num_Short = 6;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstB13()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_A,PCA9555A_OutPutPort0,0xfff7);   //写0
+     delaynms(2);
+     _nop_();
+     choose_chn0();
+    TstB00_2_C00_1();
+       	
+     choose_chn1();
+     TstB00_2_C00_1();
+     
+     choose_chn2();
+     TstB00_2_C00_1();
+      
+     choose_chn3();
+     TstB00_2_C00_1();
+    
+     choose_chn4();
+     TstB00_2_C00_1();
+    
+     choose_chn5();
+    TstB00_2_C00_1(); 
+       
+     choose_chn6();
+     TstB00_2_C00_1();
+            
+     choose_chn7();
+     TstB00_2_C00_1();
+     
+     choose_chn8();
+     TstB00_2_C00_1();
+         
+     choose_chn9();
+     TstB00_2_C00_1();
+      
+      choose_chn10();
+     TstB00_2_C00_1();
+     
+     choose_chn11();
+     TstB00_2_C00_1();
+        
+     choose_chn12();
+     TstA00_2_B00_1();
+       
+     choose_chn13();
+     TstA00_2_B00_1();
+        
+     choose_chn14();
+     TstA00_2_B00_1();
+        
+     choose_chn15();
+     TstA00_2_B00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 4;
+			Num_Short = 1;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstB14()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_A,PCA9555A_OutPutPort0,0xffef);   //写0
+     delaynms(2);
+     _nop_();
+     choose_chn0();
+     TstB00_2_C00_1();
+         	
+     choose_chn1();
+     TstB00_2_C00_1();
+     
+     choose_chn2();
+     TstB00_2_C00_1();
+     
+     choose_chn3();
+     TstB00_2_C00_1();
+     
+     choose_chn4();
+     TstB00_2_C00_1();
+     
+     choose_chn5();
+     TstB00_2_C00_1();
+        
+     choose_chn6();
+     TstB00_2_C00_1();
+     
+     choose_chn7();
+     TstB00_2_C00_1();
+    
+     choose_chn8();
+     TstB00_2_C00_1();
+     
+     choose_chn9();
+     TstB00_2_C00_1();
+     
+      choose_chn10();
+    if(!(Flag_Short))
+     	{ADC(0x02);
+     		TstShort(2.2,2.60);}
+  if(!(Flag_Short))
+      {ADC(0x03);
+    TstShort(2.2,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x04);
+     	TstShort(2.1,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x05);
+     	TstShort(2.2,2.60);}
+       
+     choose_chn11();
+     TstB00_2_C00_1();
+      
+     choose_chn12();
+     TstB00_2_C00_1();
+       
+     choose_chn13();
+     TstA00_2_B00_1();
+       
+     choose_chn14();
+     TstA00_2_B00_1();
+       
+     choose_chn15();
+     TstA00_2_B00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 5;
+			Num_Short = 1;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstB15()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_A,PCA9555A_OutPutPort0,0xffdf);   //写0
+     delaynms(2);
+     _nop_();
+     choose_chn0();
+     TstB00_2_C00_1();
+        	
+     choose_chn1();
+     TstB00_2_C00_1();
+     
+     choose_chn2();
+     TstB00_2_C00_1();
+       
+     choose_chn3();
+     TstB00_2_C00_1();
+     
+     choose_chn4();
+     TstB00_2_C00_1();
+     
+     choose_chn5();
+     TstB00_2_C00_1();
+      
+     choose_chn6();
+     TstB00_2_C00_1();
+            
+     choose_chn7();
+     TstB00_2_C00_1();
+     
+     choose_chn8();
+     TstB00_2_C00_1();
+     
+     choose_chn9();
+    TstB00_2_C00_1();
+    
+      choose_chn10();
+    TstB00_2_C00_1();
+    
+     choose_chn11();
+     TstB00_2_C00_1();
+      
+     choose_chn12();
+    TstB00_2_C00_1();
+     
+     choose_chn13();
+     TstB00_2_C00_1();
+        
+     choose_chn14();
+     TstA00_2_B00_1();
+       
+     choose_chn15();
+    TstA00_2_B00_1();
+    
+	if(Flag_Short)
+		{Junc_Short = 5;
+			Num_Short = 2;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstB16()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_A,PCA9555A_OutPutPort0,0xffbf);   //写0
+     delaynms(2);
+     _nop_();
+     choose_chn0();
+     TstB00_2_C00_1();
+      	
+     choose_chn1();
+    TstB00_2_C00_1();
+    
+     choose_chn2();
+    TstB00_2_C00_1();
+    
+     choose_chn3();
+     TstB00_2_C00_1();
+     
+     choose_chn4();
+     TstB00_2_C00_1();
+     
+     choose_chn5();
+     TstB00_2_C00_1();
+       
+     choose_chn6();
+     TstB00_2_C00_1();
+               
+     choose_chn7();
+     TstB00_2_C00_1();
+      
+     choose_chn8();
+     TstB00_2_C00_1();
+        
+     choose_chn9();
+     TstB00_2_C00_1();
+    
+      choose_chn10();
+     TstB00_2_C00_1();
+       
+     choose_chn11();
+    TstB00_2_C00_1();
+       
+     choose_chn12();
+     TstB00_2_C00_1();
+       
+     choose_chn13();
+     TstB00_2_C00_1();
+       
+     choose_chn14();
+     TstB00_2_C00_1();
+        
+     choose_chn15();
+     TstA00_2_B00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 5;
+			Num_Short = 3;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstB17()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_A,PCA9555A_OutPutPort0,0xff7f);   //写0
+     delaynms(2);
+     _nop_();
+     choose_chn0();
+    TstB00_2_C00_1();
+       	
+     choose_chn1();
+    TstB00_2_C00_1();
+     
+     choose_chn2();
+    TstB00_2_C00_1();
+     
+     choose_chn3();
+    TstB00_2_C00_1();
+    
+     choose_chn4();
+    TstB00_2_C00_1();
+    
+     choose_chn5();
+     TstB00_2_C00_1();
+     
+     choose_chn6();
+     TstB00_2_C00_1();
+            
+     choose_chn7();
+     TstB00_2_C00_1();
+    
+     choose_chn8();
+     TstB00_2_C00_1();
+       
+     choose_chn9();
+    TstB00_2_C00_1();
+    
+      choose_chn10();
+     if(!(Flag_Short))
+     	{ADC(0x02);
+     		TstShort(2.2,2.60);}
+  if(!(Flag_Short))
+      {ADC(0x03);
+    TstShort(2.2,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x04);
+     	TstShort(2.1,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x05);
+     	TstShort(2.2,2.60);}
+       
+     choose_chn11();
+     TstB00_2_C00_1();
+       
+     choose_chn12();
+     TstB00_2_C00_1();
+     
+     choose_chn13();
+    TstB00_2_C00_1();
+     
+     choose_chn14();
+     TstB00_2_C00_1();
+     
+     choose_chn15();
+     TstB00_2_C00_1();
+    
+	if(Flag_Short)
+		{Junc_Short = 5;
+			Num_Short = 4;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstC00()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_C,PCA9555A_OutPutPort0,0xfeff);   //写0
+     delaynms(2);
+     
+     _nop_();
+     choose_chn0();  
+     //_nop_();
+     TstC00_2_D00_1();
+     
+     choose_chn1();
+     TstB00_2_C00_1();
+     
+     choose_chn2();
+     TstB00_2_C00_1();
+     
+     choose_chn3();
+     TstB00_2_C00_1();
+     
+     choose_chn4();
+     TstB00_2_C00_1();
+     
+     choose_chn5();
+     TstB00_2_C00_1();
+     
+     choose_chn6();
+     TstB00_2_C00_1();
+        
+     choose_chn7();
+     TstB00_2_C00_1();
+     
+     choose_chn8();
+     TstB00_2_C00_1();
+    
+     choose_chn9();
+     TstB00_2_C00_1();
+     
+      choose_chn10();
+     if(!(Flag_Short))
+     	{ADC(0x02);
+     		TstShort(2.2,2.60);}
+  if(!(Flag_Short))
+      {ADC(0x03);
+    TstShort(2.2,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x04);
+     	TstShort(2.1,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x05);
+     	TstShort(2.2,2.60);}
+     
+     choose_chn11();
+     TstB00_2_C00_1();
+     
+     choose_chn12();
+     TstB00_2_C00_1();
+     
+     choose_chn13();
+     TstB00_2_C00_1();
+     
+     choose_chn14();
+     TstB00_2_C00_1();
+     
+     choose_chn15();
+     TstB00_2_C00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 5;
+			Num_Short = 7;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstC01()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_C,PCA9555A_OutPutPort0,0xfdff);   //写0
+     delaynms(2);
+     _nop_();
+     choose_chn0();
+     TstC00_2_D00_1();
+     	
+     choose_chn1();
+     delaynms(2);
+     TstC00_2_D00_1();
+     
+     choose_chn2();
+     TstB00_2_C00_1();
+       
+     choose_chn3();
+     TstB00_2_C00_1();
+    
+     choose_chn4();
+     TstB00_2_C00_1();
+     
+     choose_chn5();
+     TstB00_2_C00_1();
+     
+     choose_chn6();
+     TstB00_2_C00_1();
+          
+     choose_chn7();
+     TstB00_2_C00_1();
+     
+     choose_chn8();
+     TstB00_2_C00_1();
+     
+     choose_chn9();
+     TstB00_2_C00_1();
+     
+      choose_chn10();
+    if(!(Flag_Short))
+     	{ADC(0x02);
+     		TstShort(2.2,2.60);}
+  if(!(Flag_Short))
+      {ADC(0x03);
+    TstShort(2.2,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x04);
+     	TstShort(2.1,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x05);
+     	TstShort(2.2,2.60);}
+    
+     choose_chn11();
+     TstB00_2_C00_1();
+     
+     choose_chn12();
+     TstB00_2_C00_1();
+     
+     choose_chn13();
+     TstB00_2_C00_1();
+      
+     choose_chn14();
+     TstB00_2_C00_1();
+      
+     choose_chn15();
+     TstB00_2_C00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 5;
+			Num_Short = 8;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstC02()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_C,PCA9555A_OutPutPort0,0xfbff);   //写0
+     delaynms(2);
+     
+     choose_chn0();
+     _nop_();
+     TstC00_2_D00_1();
+       	
+     choose_chn1();
+     //_nop_();
+     TstC00_2_D00_1();
+     
+     choose_chn2();
+     //_nop_();
+     TstC00_2_D00_1();
+        
+     choose_chn3();
+     TstB00_2_C00_1();
+     
+     choose_chn4();
+     TstB00_2_C00_1();
+     
+     choose_chn5();
+     TstB00_2_C00_1();
+     
+     choose_chn6();
+     TstB00_2_C00_1();
+        
+     choose_chn7();
+     TstB00_2_C00_1();
+     
+     choose_chn8();
+     TstB00_2_C00_1();
+      
+     choose_chn9();
+    TstB00_2_C00_1();
+    
+      choose_chn10();
+     if(!(Flag_Short))
+     	{ADC(0x02);
+     		TstShort(2.2,2.60);}
+  if(!(Flag_Short))
+      {ADC(0x03);
+    TstShort(2.2,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x04);
+     	TstShort(2.1,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x05);
+     	TstShort(2.2,2.60);}
+       
+     choose_chn11();
+     TstB00_2_C00_1();
+     
+     choose_chn12();
+     TstB00_2_C00_1();
+     
+     choose_chn13();
+     TstB00_2_C00_1();
+     
+     choose_chn14();
+     TstB00_2_C00_1();
+       
+     choose_chn15();
+     TstB00_2_C00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 5;
+			Num_Short = 9;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstC03()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_C,PCA9555A_OutPutPort0,0xf7ff);   //写0
+     delaynms(2);
+     _nop_();
+     choose_chn0();
+     TstC00_2_D00_1();
+     	
+     choose_chn1();
+     TstC00_2_D00_1();
+     
+     choose_chn2();
+     _nop_();
+     TstC00_2_D00_1();
+    
+     choose_chn3();
+     TstC00_2_D00_1();
+     
+     choose_chn4();
+     TstB00_2_C00_1();
+     
+     choose_chn5();
+     TstB00_2_C00_1();
+          
+     choose_chn6();
+     TstB00_2_C00_1();
+           
+     choose_chn7();
+     TstB00_2_C00_1();
+       
+     choose_chn8();
+     TstB00_2_C00_1();
+     
+     choose_chn9();
+     TstB00_2_C00_1();
+     
+      choose_chn10();
+     if(!(Flag_Short))
+     	{ADC(0x02);
+     		TstShort(2.2,2.60);}
+  if(!(Flag_Short))
+      {ADC(0x03);
+    TstShort(2.2,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x04);
+     	TstShort(2.1,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x05);
+     	TstShort(2.2,2.60);}
+       
+     choose_chn11();
+     TstB00_2_C00_1();
+        
+     choose_chn12();
+     TstB00_2_C00_1();
+       
+     choose_chn13();
+     TstB00_2_C00_1();
+        
+     choose_chn14();
+     TstB00_2_C00_1();
+        
+     choose_chn15();
+     TstB00_2_C00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 5;
+			Num_Short = 10;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstC04()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_C,PCA9555A_OutPutPort0,0xefff);   //写0
+     delaynms(2);
+     _nop_();
+     choose_chn0();
+     TstC00_2_D00_1();
+     	
+     choose_chn1();
+     TstC00_2_D00_1();
+     
+     choose_chn2();
+     TstC00_2_D00_1();
+       
+     choose_chn3();
+     TstC00_2_D00_1();
+     
+     choose_chn4();
+     TstC00_2_D00_1();
+     
+     choose_chn5();
+     TstB00_2_C00_1();
+        
+     choose_chn6();
+     TstB00_2_C00_1();
+            
+     choose_chn7();
+     TstB00_2_C00_1();
+     
+     choose_chn8();
+     TstB00_2_C00_1();
+       
+     choose_chn9();
+     TstB00_2_C00_1();
+      
+      choose_chn10();
+     if(!(Flag_Short))
+     	{ADC(0x02);
+     		TstShort(2.2,2.60);}
+  if(!(Flag_Short))
+      {ADC(0x03);
+    TstShort(2.2,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x04);
+     	TstShort(2.1,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x05);
+     	TstShort(2.2,2.60);}
+     
+     choose_chn11();
+    TstB00_2_C00_1();
+    
+     choose_chn12();
+    TstB00_2_C00_1();
+      
+     choose_chn13();
+    TstB00_2_C00_1();
+      
+     choose_chn14();
+     TstB00_2_C00_1();
+      
+     choose_chn15();
+     TstB00_2_C00_1();
+    
+	if(Flag_Short)
+		{Junc_Short = 5;
+			Num_Short = 11;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstC05()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_C,PCA9555A_OutPutPort0,0xdfff);   //写0
+     delaynms(2);
+     _nop_();
+     choose_chn0();
+     TstC00_2_D00_1();
+      	
+     choose_chn1();
+     TstC00_2_D00_1();
+     
+     choose_chn2();
+     TstC00_2_D00_1();
+     
+     choose_chn3();
+     TstC00_2_D00_1();
+     
+     choose_chn4();
+     TstC00_2_D00_1();
+     
+     choose_chn5();
+     TstC00_2_D00_1();
+      
+     choose_chn6();
+    TstB00_2_C00_1();
+        
+     choose_chn7();
+     TstB00_2_C00_1();
+     
+     choose_chn8();
+     TstB00_2_C00_1();
+     
+     choose_chn9();
+    TstB00_2_C00_1();
+    
+      choose_chn10();
+     if(!(Flag_Short))
+     	{ADC(0x02);
+     		TstShort(2.2,2.60);}
+  if(!(Flag_Short))
+      {ADC(0x03);
+    TstShort(2.2,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x04);
+     	TstShort(2.1,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x05);
+     	TstShort(2.2,2.60);}
+     
+     choose_chn11();
+     TstB00_2_C00_1();
+     
+     choose_chn12();
+     TstB00_2_C00_1();
+     
+     choose_chn13();
+     TstB00_2_C00_1();
+     
+     choose_chn14();
+     TstB00_2_C00_1();
+     
+     choose_chn15();
+     TstB00_2_C00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 5;
+			Num_Short = 12;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstC06()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_C,PCA9555A_OutPutPort0,0xbfff);   //写0
+     delaynms(2);
+     _nop_();
+     choose_chn0();
+     TstC00_2_D00_1();
+        	
+     choose_chn1();
+     TstC00_2_D00_1();
+     
+     choose_chn2();
+     TstC00_2_D00_1();
+     
+     choose_chn3();
+     TstC00_2_D00_1();
+     
+     choose_chn4();
+     TstC00_2_D00_1();
+    
+     choose_chn5();
+     TstC00_2_D00_1();
+       
+     choose_chn6();
+     TstC00_2_D00_1();
+             
+     choose_chn7();
+     TstB00_2_C00_1();
+    
+     choose_chn8();
+     TstB00_2_C00_1();
+     
+     choose_chn9();
+     TstB00_2_C00_1();
+     
+      choose_chn10();
+     TstB00_2_C00_1();
+     
+     choose_chn11();
+    TstB00_2_C00_1();
+    
+     choose_chn12();
+    TstB00_2_C00_1();
+    
+     choose_chn13();
+     TstB00_2_C00_1();
+     
+     choose_chn14();
+     TstB00_2_C00_1();
+     
+     choose_chn15();
+    TstB00_2_C00_1();
+    
+	if(Flag_Short)
+		{Junc_Short = 5;
+			Num_Short = 13;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstC07()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_C,PCA9555A_OutPutPort0,0x7fff);   //写0
+    
+     delaynms(2);
+     _nop_(); 
+     
+    
+     
+     choose_chn0();
+      _nop_();
+    TstC00_2_D00_1();
+       	
+     choose_chn1();
+     TstC00_2_D00_1();
+      
+     choose_chn2();
+    TstC00_2_D00_1();
+     
+     choose_chn3();
+    TstC00_2_D00_1();
+     
+     choose_chn4();
+     TstC00_2_D00_1();
+     
+     choose_chn5();
+     TstC00_2_D00_1();
+      
+     choose_chn6();
+    TstC00_2_D00_1();
+            
+     choose_chn7();
+     TstC00_2_D00_1();
+     
+     choose_chn8();
+    TstB00_2_C00_1();
+ 
+     choose_chn9();
+    TstB00_2_C00_1();
+    
+      choose_chn10();
+   TstB00_2_C00_1();
+    
+     choose_chn11();
+    TstB00_2_C00_1();
+       
+     choose_chn12();
+     TstB00_2_C00_1();
+       
+     choose_chn13();
+    TstB00_2_C00_1();
+       
+     choose_chn14();
+    TstB00_2_C00_1();
+         
+     choose_chn15();
+     TstB00_2_C00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 5;
+			Num_Short = 14;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstC10()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_C,PCA9555A_OutPutPort0,0xfffe);   //写0
+     delaynms(2);
+     _nop_();
+     choose_chn0();
+     TstC00_2_D00_1();
+        	
+     choose_chn1();
+     TstC00_2_D00_1();
+      
+     choose_chn2();
+     TstC00_2_D00_1();
+       
+     choose_chn3();
+     TstC00_2_D00_1();
+     
+     choose_chn4();
+     TstC00_2_D00_1();
+     
+     choose_chn5();
+     TstC00_2_D00_1();
+        
+     choose_chn6();
+     TstC00_2_D00_1();
+           
+     choose_chn7();
+     TstC00_2_D00_1();
+     
+     choose_chn8();
+     TstC00_2_D00_1();
+       
+     choose_chn9();
+     TstB00_2_C00_1();
+     
+      choose_chn10();
+    TstB00_2_C00_1(); 
+    
+     choose_chn11();
+    TstB00_2_C00_1();
+      
+     choose_chn12();
+     TstB00_2_C00_1();
+     
+     choose_chn13();
+     TstB00_2_C00_1();
+     
+     choose_chn14();
+     TstB00_2_C00_1();
+     
+     choose_chn15();
+     TstB00_2_C00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 6;
+			Num_Short = 1;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstC11()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_C,PCA9555A_OutPutPort0,0xfffd);   //写0
+     delaynms(2);
+     _nop_();
+     choose_chn0();
+     TstC00_2_D00_1();
+        	
+     choose_chn1();
+     TstC00_2_D00_1();
+     
+     choose_chn2();
+     TstC00_2_D00_1();
+      
+     choose_chn3();
+     TstC00_2_D00_1();
+     
+     choose_chn4();
+     TstC00_2_D00_1();
+     
+     choose_chn5();
+     TstC00_2_D00_1();
+      
+     choose_chn6();
+     TstC00_2_D00_1();
+           
+     choose_chn7();
+     TstC00_2_D00_1();
+     
+     choose_chn8();
+     TstC00_2_D00_1();
+       
+     choose_chn9();
+     TstC00_2_D00_1();
+       
+      choose_chn10();
+    TstB00_2_C00_1();
+    
+     choose_chn11();
+    TstB00_2_C00_1();
+     
+     choose_chn12();
+     TstB00_2_C00_1();
+       
+     choose_chn13();
+     TstB00_2_C00_1();
+       
+     choose_chn14();
+    TstB00_2_C00_1();
+      
+     choose_chn15();
+     TstB00_2_C00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 7;
+			Num_Short = 1;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstC12()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_C,PCA9555A_OutPutPort0,0xfffb);   //写0
+     delaynms(2);
+     _nop_();
+     choose_chn0();
+     TstC00_2_D00_1();
+        	
+     choose_chn1();
+     TstC00_2_D00_1();
+      
+     choose_chn2();
+     TstC00_2_D00_1();
+       
+     choose_chn3();
+     TstC00_2_D00_1();
+    
+     choose_chn4();
+     TstC00_2_D00_1();
+     
+     choose_chn5();
+     TstC00_2_D00_1();
+      
+     choose_chn6();
+     TstC00_2_D00_1();
+            
+     choose_chn7();
+     TstC00_2_D00_1();
+     
+     choose_chn8();
+     TstC00_2_D00_1();
+       
+     choose_chn9();
+    TstC00_2_D00_1();
+    
+      choose_chn10();
+     TstC00_2_D00_1();
+     
+     choose_chn11();
+    TstB00_2_C00_1();
+    
+     choose_chn12();
+    TstB00_2_C00_1();
+   
+     choose_chn13();
+    TstB00_2_C00_1();
+    
+     choose_chn14();
+     TstB00_2_C00_1();
+     
+     choose_chn15();
+    TstB00_2_C00_1();
+    
+	if(Flag_Short)
+		{Junc_Short = 7;
+			Num_Short = 2;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstC13()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_C,PCA9555A_OutPutPort0,0xfff7);   //写0
+     delaynms(2);
+     _nop_();
+     choose_chn0();
+    TstC00_2_D00_1();
+       	
+     choose_chn1();
+     TstC00_2_D00_1();
+     
+     choose_chn2();
+     TstC00_2_D00_1();
+     
+     choose_chn3();
+     TstC00_2_D00_1();
+     
+     choose_chn4();
+     TstC00_2_D00_1();
+     
+     choose_chn5();
+    TstC00_2_D00_1();
+    
+     choose_chn6();
+     TstC00_2_D00_1();
+            
+     choose_chn7();
+     TstC00_2_D00_1();
+    
+     choose_chn8();
+     TstC00_2_D00_1();
+      
+     choose_chn9();
+     TstC00_2_D00_1();
+     
+      choose_chn10();
+     TstC00_2_D00_1();
+       
+     choose_chn11();
+     TstC00_2_D00_1();
+      
+     choose_chn12();
+     TstB00_2_C00_1();
+    
+     choose_chn13();
+     TstB00_2_C00_1();
+       
+     choose_chn14();
+     TstB00_2_C00_1();
+       
+     choose_chn15();
+     TstB00_2_C00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 7;
+			Num_Short = 3;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstC14()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_C,PCA9555A_OutPutPort0,0xffef);   //写0
+     delaynms(2);
+     _nop_();
+     choose_chn0();
+     TstC00_2_D00_1();
+        	
+     choose_chn1();
+     TstC00_2_D00_1();
+     
+     choose_chn2();
+     TstC00_2_D00_1();
+      
+     choose_chn3();
+     TstC00_2_D00_1();
+     
+     choose_chn4();
+     TstC00_2_D00_1();
+    
+     choose_chn5();
+     TstC00_2_D00_1();
+      
+     choose_chn6();
+     TstC00_2_D00_1();
+     
+     choose_chn7();
+     TstC00_2_D00_1();
+     
+     choose_chn8();
+     TstC00_2_D00_1();
+       
+     choose_chn9();
+     TstC00_2_D00_1();
+       
+      choose_chn10();
+     TstC00_2_D00_1();
+        
+     choose_chn11();
+     TstC00_2_D00_1();
+        
+     choose_chn12();
+     TstC00_2_D00_1();
+        
+     choose_chn13();
+     TstB00_2_C00_1();
+       
+     choose_chn14();
+     TstB00_2_C00_1();
+     
+     choose_chn15();
+     TstB00_2_C00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 7;
+			Num_Short = 4;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstC15()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_C,PCA9555A_OutPutPort0,0xffdf);   //写0
+     delaynms(2);
+     _nop_();
+     choose_chn0();
+     TstC00_2_D00_1();
+      	
+     choose_chn1();
+     TstC00_2_D00_1();
+        
+     choose_chn2();
+     TstC00_2_D00_1();
+       
+     choose_chn3();
+     TstC00_2_D00_1();
+     
+     choose_chn4();
+     TstC00_2_D00_1();
+     
+     choose_chn5();
+     TstC00_2_D00_1();
+       
+     choose_chn6();
+     TstC00_2_D00_1();
+            
+     choose_chn7();
+     TstC00_2_D00_1();
+     
+     choose_chn8();
+     TstC00_2_D00_1();
+       
+     choose_chn9();
+    TstC00_2_D00_1();
+     
+      choose_chn10();
+    TstC00_2_D00_1();
+      
+     choose_chn11();
+     TstC00_2_D00_1();
+       
+     choose_chn12();
+    TstC00_2_D00_1();
+      
+     choose_chn13();
+     TstC00_2_D00_1();
+     
+     choose_chn14();
+     TstB00_2_C00_1();
+     
+     choose_chn15();
+    TstB00_2_C00_1();
+   
+	if(Flag_Short)
+		{Junc_Short = 7;
+			Num_Short = 5;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstC16()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_C,PCA9555A_OutPutPort0,0xffbf);   //写0
+     delaynms(2);
+     _nop_();
+     choose_chn0();
+     TstC00_2_D00_1();
+       	
+     choose_chn1();
+    TstC00_2_D00_1();
+    
+     choose_chn2();
+    TstC00_2_D00_1();
+    
+     choose_chn3();
+     TstC00_2_D00_1();
+     
+     choose_chn4();
+     TstC00_2_D00_1();
+     
+     choose_chn5();
+     TstC00_2_D00_1();
+         
+     choose_chn6();
+     TstC00_2_D00_1();
+              
+     choose_chn7();
+     TstC00_2_D00_1();
+     
+     choose_chn8();
+     TstC00_2_D00_1();
+      
+     choose_chn9();
+     TstC00_2_D00_1();
+      
+      choose_chn10();
+     TstC00_2_D00_1();
+        
+     choose_chn11();
+    TstC00_2_D00_1();
+      
+     choose_chn12();
+     TstC00_2_D00_1();
+       
+     choose_chn13();
+     TstC00_2_D00_1();
+        
+     choose_chn14();
+     TstC00_2_D00_1();
+       
+     choose_chn15();
+     TstB00_2_C00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 7;
+			Num_Short = 6;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstC17()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_C,PCA9555A_OutPutPort0,0xff7f);   //写0
+     delaynms(2);
+     _nop_();
+     choose_chn0();
+    TstC00_2_D00_1();
+      	
+     choose_chn1();
+    TstC00_2_D00_1();
+    
+     choose_chn2();
+    TstC00_2_D00_1();
+     
+     choose_chn3();
+    TstC00_2_D00_1();
+    
+     choose_chn4();
+    TstC00_2_D00_1();
+    
+     choose_chn5();
+     TstC00_2_D00_1();
+      
+     choose_chn6();
+     TstC00_2_D00_1();
+            
+     choose_chn7();
+     TstC00_2_D00_1();
+       
+     choose_chn8();
+     TstC00_2_D00_1();
+        
+     choose_chn9();
+    TstC00_2_D00_1();
+      
+      choose_chn10();
+     TstC00_2_D00_1();
+         
+     choose_chn11();
+     TstC00_2_D00_1();
+         
+     choose_chn12();
+     TstC00_2_D00_1();
+       
+     choose_chn13();
+    TstC00_2_D00_1();
+      
+     choose_chn14();
+     TstC00_2_D00_1();
+        
+     choose_chn15();
+     TstC00_2_D00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 7;
+			Num_Short = 7;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstD00()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_D,PCA9555A_OutPutPort0,0xfeff);   //写0
+     delaynms(2);
+     _nop_();
+     
+     choose_chn0();  
+     TstD00_2_E00_1();
+          	
+     choose_chn1();
+     if(!(Flag_Short))
+     	{ADC(0x03);
+     	TstShort(2.00,2.60);}
+     if(!(Flag_Short))
+     	{ADC(0x04);
+     	TstShort(2.05,2.60);}
+      if(!(Flag_Short))
+     	{ADC(0x05);
+     	TstShort(2.05,2.60);}
+     
+     choose_chn2();
+     TstC00_2_D00_1();
+       
+     choose_chn3();
+     TstC00_2_D00_1();
+     
+     choose_chn4();
+     TstC00_2_D00_1();
+     
+     choose_chn5();
+     TstC00_2_D00_1();
+        
+     choose_chn6();
+     TstC00_2_D00_1();
+            
+     choose_chn7();
+     TstC00_2_D00_1();
+     
+     choose_chn8();
+     TstC00_2_D00_1();
+        
+     choose_chn9();
+     TstC00_2_D00_1();
+     
+      choose_chn10();
+     TstC00_2_D00_1();
+        
+     choose_chn11();
+     TstC00_2_D00_1();
+       
+     choose_chn12();
+     TstC00_2_D00_1();
+       
+     choose_chn13();
+     TstC00_2_D00_1();
+      
+     choose_chn14();
+     TstC00_2_D00_1();
+        
+     choose_chn15();
+     TstC00_2_D00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 7;
+			Num_Short = 11;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstD01()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_D,PCA9555A_OutPutPort0,0xfdff);   //写0
+     delaynms(2);
+     _nop_();
+     choose_chn0();
+     TstD00_2_E00_1();
+          	
+     choose_chn1();
+     _nop_();
+     TstD00_2_E00_1();
+        
+     choose_chn2();
+     TstC00_2_D00_1();
+     
+     choose_chn3();
+     TstC00_2_D00_1();
+     
+     choose_chn4();
+     TstC00_2_D00_1();
+     
+     choose_chn5();
+     TstC00_2_D00_1();
+       
+     choose_chn6();
+     TstC00_2_D00_1();
+            
+     choose_chn7();
+     TstC00_2_D00_1();
+      
+     choose_chn8();
+     TstC00_2_D00_1();
+       
+     choose_chn9();
+     TstC00_2_D00_1();
+     
+      choose_chn10();
+    TstC00_2_D00_1();
+    
+     choose_chn11();
+     TstC00_2_D00_1();
+     
+     choose_chn12();
+     TstC00_2_D00_1();
+     
+     choose_chn13();
+     TstC00_2_D00_1();
+     
+     choose_chn14();
+     TstC00_2_D00_1();
+     
+     choose_chn15();
+     TstC00_2_D00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 7;
+			Num_Short = 12;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstD02()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_D,PCA9555A_OutPutPort0,0xfbff);   //写0
+     delaynms(2);
+     _nop_();
+     choose_chn0();
+     TstD00_2_E00_1();
+          	
+     choose_chn1();
+     _nop_();
+     TstD00_2_E00_1();
+        
+     choose_chn2();
+     TstD00_2_E00_1();
+         
+     choose_chn3();
+     TstC00_2_D00_1();
+     
+     choose_chn4();
+     TstC00_2_D00_1();
+     
+     choose_chn5();
+     TstC00_2_D00_1();
+       
+     choose_chn6();
+     TstC00_2_D00_1();
+             
+     choose_chn7();
+     TstC00_2_D00_1();
+     
+     choose_chn8();
+     TstC00_2_D00_1();
+      
+     choose_chn9();
+    TstC00_2_D00_1();
+    
+      choose_chn10();
+     TstC00_2_D00_1();
+      
+     choose_chn11();
+     TstC00_2_D00_1();
+     
+     choose_chn12();
+     TstC00_2_D00_1();
+     
+     choose_chn13();
+     TstC00_2_D00_1();
+       
+     choose_chn14();
+     TstC00_2_D00_1();
+       
+     choose_chn15();
+     TstC00_2_D00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 7;
+			Num_Short = 13;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstD03()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_D,PCA9555A_OutPutPort0,0xf7ff);   //写0
+     delaynms(2);
+     _nop_();
+     choose_chn0();
+     TstD00_2_E00_1();
+          	
+     choose_chn1();
+     TstD00_2_E00_1();
+        
+     choose_chn2();
+     TstD00_2_E00_1();
+         
+     choose_chn3();
+     TstD00_2_E00_1();
+     
+     choose_chn4();
+     TstC00_2_D00_1();
+    
+     choose_chn5();
+     TstC00_2_D00_1();
+      
+     choose_chn6();
+     TstC00_2_D00_1();
+            
+     choose_chn7();
+     TstC00_2_D00_1();
+      
+     choose_chn8();
+     TstC00_2_D00_1();
+     
+     choose_chn9();
+     TstC00_2_D00_1();
+     
+      choose_chn10();
+     TstC00_2_D00_1();
+      
+     choose_chn11();
+     TstC00_2_D00_1();
+      
+     choose_chn12();
+     TstC00_2_D00_1();
+     
+     choose_chn13();
+     TstC00_2_D00_1();
+     
+     choose_chn14();
+     TstC00_2_D00_1();
+       
+     choose_chn15();
+     TstC00_2_D00_1();
+    
+	if(Flag_Short)
+		{Junc_Short = 7;
+			Num_Short = 14;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstD04()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_D,PCA9555A_OutPutPort0,0xefff);   //写0
+     delaynms(2);
+     _nop_();
+     choose_chn0();
+     TstD00_2_E00_1();
+          	
+     choose_chn1();
+     TstD00_2_E00_1();
+        
+     choose_chn2();
+     TstD00_2_E00_1();
+         
+     choose_chn3();
+     TstD00_2_E00_1();
+     
+     choose_chn4();
+     TstD00_2_E00_1();
+     
+     choose_chn5();
+     TstC00_2_D00_1();
+       
+     choose_chn6();
+     TstC00_2_D00_1();
+           
+     choose_chn7();
+     TstC00_2_D00_1();
+     
+     choose_chn8();
+     TstC00_2_D00_1();
+    
+     choose_chn9();
+     TstC00_2_D00_1();
+     
+      choose_chn10();
+     TstC00_2_D00_1();
+      
+     choose_chn11();
+    TstC00_2_D00_1();
+    
+     choose_chn12();
+    TstC00_2_D00_1();
+     
+     choose_chn13();
+    TstC00_2_D00_1();
+    
+     choose_chn14();
+     TstC00_2_D00_1();
+    
+     choose_chn15();
+     TstC00_2_D00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 7;
+			Num_Short = 15;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstD05()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_D,PCA9555A_OutPutPort0,0xdfff);   //写0
+     delaynms(2);
+     _nop_();
+     choose_chn0();
+     TstD00_2_E00_1();
+          	
+     choose_chn1();
+     TstD00_2_E00_1();
+        
+     choose_chn2();
+     TstD00_2_E00_1();
+         
+     choose_chn3();
+     TstD00_2_E00_1();
+     
+     choose_chn4();
+     TstD00_2_E00_1();
+     
+     choose_chn5();
+     TstD00_2_E00_1();
+          
+     choose_chn6();
+    TstC00_2_D00_1();
+    
+     choose_chn7();
+     TstC00_2_D00_1();
+     
+     choose_chn8();
+     TstC00_2_D00_1();
+     
+     choose_chn9();
+    TstC00_2_D00_1();
+    
+      choose_chn10();
+     TstC00_2_D00_1();
+     
+     choose_chn11();
+     TstC00_2_D00_1();
+     
+     choose_chn12();
+     TstC00_2_D00_1();
+       
+     choose_chn13();
+     TstC00_2_D00_1();
+     
+     choose_chn14();
+     TstC00_2_D00_1();
+     
+     choose_chn15();
+     TstC00_2_D00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 7;
+			Num_Short = 16;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstD06()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_D,PCA9555A_OutPutPort0,0xbfff);   //写0
+     delaynms(2);
+     _nop_();
+     choose_chn0();
+     TstD00_2_E00_1();
+          	
+     choose_chn1();
+     TstD00_2_E00_1();
+        
+     choose_chn2();
+     TstD00_2_E00_1();
+         
+     choose_chn3();
+     TstD00_2_E00_1();
+     
+     choose_chn4();
+     TstD00_2_E00_1();
+     
+     choose_chn5();
+     TstD00_2_E00_1();
+          
+     choose_chn6();
+     TstD00_2_E00_1();
+               
+     choose_chn7();
+     TstC00_2_D00_1();
+      
+     choose_chn8();
+     TstC00_2_D00_1();
+      
+     choose_chn9();
+     TstC00_2_D00_1();
+    
+      choose_chn10();
+     TstC00_2_D00_1();
+     
+     choose_chn11();
+    TstC00_2_D00_1();
+    
+     choose_chn12();
+    TstC00_2_D00_1();
+    
+     choose_chn13();
+     TstC00_2_D00_1();
+     
+     choose_chn14();
+     TstC00_2_D00_1();
+     
+     choose_chn15();
+    TstC00_2_D00_1();
+    
+	if(Flag_Short)
+		{Junc_Short = 7;
+			Num_Short = 17;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstD07()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_D,PCA9555A_OutPutPort0,0x7fff);   //写0
+     delaynms(2);
+     _nop_();
+     choose_chn0();
+     TstD00_2_E00_1();
+          	
+     choose_chn1();
+     TstD00_2_E00_1();
+        
+     choose_chn2();
+     TstD00_2_E00_1();
+         
+     choose_chn3();
+     TstD00_2_E00_1();
+     
+     choose_chn4();
+     TstD00_2_E00_1();
+     
+     choose_chn5();
+     TstD00_2_E00_1();
+          
+     choose_chn6();
+     TstD00_2_E00_1();
+               
+       choose_chn7();
+       //_nop_();
+      TstD00_2_E00_1();
+       
+     choose_chn8();
+    TstC00_2_D00_1();
+    
+     choose_chn9();
+    TstC00_2_D00_1();
+    
+      choose_chn10();
+    TstC00_2_D00_1();
+    
+     choose_chn11();
+     TstC00_2_D00_1();
+     
+     choose_chn12();
+     TstC00_2_D00_1();
+     
+     choose_chn13();
+     TstC00_2_D00_1();
+     
+     choose_chn14();
+     TstC00_2_D00_1();
+      
+     choose_chn15();
+     TstC00_2_D00_1();
+     
+  if(Flag_Short)
+		{Junc_Short = 7;
+			Num_Short = 18;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstD10()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_D,PCA9555A_OutPutPort0,0xfffe);   //写0
+     delaynms(2);
+     _nop_();
+     choose_chn0();
+     TstD00_2_E00_1();
+          	
+     choose_chn1();
+     TstD00_2_E00_1();
+        
+     choose_chn2();
+     TstD00_2_E00_1();
+         
+     choose_chn3();
+     TstD00_2_E00_1();
+     
+     choose_chn4();
+     TstD00_2_E00_1();
+     
+     choose_chn5();
+     TstD00_2_E00_1();
+          
+     choose_chn6();
+     TstD00_2_E00_1();
+               
+       choose_chn7();
+       //_nop_();
+     TstD00_2_E00_1();
+       
+     choose_chn8();
+     TstD00_2_E00_1();
+          
+     choose_chn9();
+     TstC00_2_D00_1();
+    
+      choose_chn10();
+    TstC00_2_D00_1();
+    
+     choose_chn11();
+    TstC00_2_D00_1();
+    
+     choose_chn12();
+     TstC00_2_D00_1();
+     
+     choose_chn13();
+     TstC00_2_D00_1();
+     
+     choose_chn14();
+     TstC00_2_D00_1();
+     
+     choose_chn15();
+     TstC00_2_D00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 7;
+			Num_Short = 19;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstD11()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_D,PCA9555A_OutPutPort0,0xfffd);   //写0
+     delaynms(2);
+     _nop_();
+     choose_chn0();
+     TstD00_2_E00_1();
+          	
+     choose_chn1();
+     TstD00_2_E00_1();
+        
+     choose_chn2();
+     TstD00_2_E00_1();
+         
+     choose_chn3();
+     TstD00_2_E00_1();
+     
+     choose_chn4();
+     TstD00_2_E00_1();
+     
+     choose_chn5();
+     TstD00_2_E00_1();
+          
+     choose_chn6();
+     TstD00_2_E00_1();
+               
+       choose_chn7();
+     TstD00_2_E00_1();
+       
+     choose_chn8();
+     TstD00_2_E00_1();
+          
+     choose_chn9();
+     TstD00_2_E00_1();
+        
+      choose_chn10();
+    TstC00_2_D00_1();
+      
+     choose_chn11();
+    TstC00_2_D00_1();
+     
+     choose_chn12();
+     TstC00_2_D00_1();
+       
+     choose_chn13();
+     TstC00_2_D00_1();
+     
+     choose_chn14();
+    TstC00_2_D00_1();
+      
+     choose_chn15();
+     TstC00_2_D00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 7;
+			Num_Short = 20;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstD12()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_D,PCA9555A_OutPutPort0,0xfffb);   //写0
+     delaynms(2);
+     _nop_();
+     choose_chn0();
+     TstD00_2_E00_1();
+          	
+     choose_chn1();
+     TstD00_2_E00_1();
+        
+     choose_chn2();
+     TstD00_2_E00_1();
+         
+     choose_chn3();
+     TstD00_2_E00_1();
+     
+     choose_chn4();
+     TstD00_2_E00_1();
+     
+     choose_chn5();
+     TstD00_2_E00_1();
+          
+     choose_chn6();
+     TstD00_2_E00_1();
+               
+      choose_chn7();
+      //_nop_();
+     TstD00_2_E00_1();
+           
+     choose_chn8();
+     TstD00_2_E00_1();
+          
+     choose_chn9();
+    TstD00_2_E00_1();
+        
+      choose_chn10();
+     TstD00_2_E00_1();
+          
+      choose_chn11();
+     if(!(Flag_Short))
+     	{ADC(0x03);
+     	TstShort(1.65,2.15);}   
+   
+     choose_chn12();
+    TstC00_2_D00_1();
+     
+     choose_chn13();
+    TstC00_2_D00_1();
+      
+     choose_chn14();
+     TstC00_2_D00_1();
+      
+     choose_chn15();
+    TstC00_2_D00_1();
+    
+	if(Flag_Short)
+		{Junc_Short = 8;
+			Num_Short = 1;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstD13()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_D,PCA9555A_OutPutPort0,0xfff7);   //写0
+     delaynms(2);
+     _nop_();
+     choose_chn0();
+    TstD00_2_E00_1();
+          	
+     choose_chn1();
+     TstD00_2_E00_1();
+        
+     choose_chn2();
+     TstD00_2_E00_1();
+         
+     choose_chn3();
+     TstD00_2_E00_1();
+     
+     choose_chn4();
+    TstD00_2_E00_1();
+     
+     choose_chn5();
+    TstD00_2_E00_1();
+          
+     choose_chn6();
+     TstD00_2_E00_1();
+               
+       choose_chn7();
+       //_nop_();
+     TstD00_2_E00_1();
+             
+     choose_chn8();
+     TstD00_2_E00_1();
+          
+     choose_chn9();
+     TstD00_2_E00_1();
+        
+      choose_chn10();
+     TstD00_2_E00_1();
+          
+     choose_chn11();
+     TstD00_2_E00_1();
+          
+     choose_chn12();
+     TstC00_2_D00_1();
+      
+     choose_chn13();
+     TstC00_2_D00_1();
+        
+     choose_chn14();
+     TstC00_2_D00_1();
+        
+     choose_chn15();
+     TstC00_2_D00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 8;
+			Num_Short = 2;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstD14()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_D,PCA9555A_OutPutPort0,0xffef);   //写0
+     delaynms(2);
+     _nop_();
+     choose_chn0();
+     TstD00_2_E00_1();
+          	
+     choose_chn1();
+     TstD00_2_E00_1();
+        
+     choose_chn2();
+     TstD00_2_E00_1();
+         
+     choose_chn3();
+     TstD00_2_E00_1();
+     
+     choose_chn4();
+     TstD00_2_E00_1();
+     
+     choose_chn5();
+     TstD00_2_E00_1();
+          
+     choose_chn6();
+     TstD00_2_E00_1();
+     
+      choose_chn7();
+      //_nop_();
+     TstD00_2_E00_1();
+               
+     choose_chn8();
+     TstD00_2_E00_1();
+          
+     choose_chn9();
+     TstD00_2_E00_1();
+        
+      choose_chn10();
+     TstD00_2_E00_1();
+          
+     choose_chn11();
+     TstD00_2_E00_1();
+          
+     choose_chn12();
+     TstD00_2_E00_1();
+          
+     choose_chn13();
+     TstC00_2_D00_1();
+        
+     choose_chn14();
+     TstC00_2_D00_1();
+       
+     choose_chn15();
+     TstC00_2_D00_1();
+    
+	if(Flag_Short)
+		{Junc_Short = 8;
+			Num_Short = 3;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstD15()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_D,PCA9555A_OutPutPort0,0xffdf);   //写0
+     delaynms(2);
+     _nop_();
+     choose_chn0();
+     TstD00_2_E00_1();
+          	
+     choose_chn1();
+     TstD00_2_E00_1();
+        
+     choose_chn2();
+     TstD00_2_E00_1();
+         
+     choose_chn3();
+     TstD00_2_E00_1();
+     
+     choose_chn4();
+     TstD00_2_E00_1();
+     
+     choose_chn5();
+     TstD00_2_E00_1();
+          
+     choose_chn6();
+     TstD00_2_E00_1();
+               
+     choose_chn7();
+     //_nop_();
+     TstD00_2_E00_1();
+            
+     choose_chn8();
+     TstD00_2_E00_1();
+          
+     choose_chn9();
+    TstD00_2_E00_1();
+        
+      choose_chn10();
+    TstD00_2_E00_1();
+          
+     choose_chn11();
+     TstD00_2_E00_1();
+          
+     choose_chn12();
+    TstD00_2_E00_1();
+          
+     choose_chn13();
+     TstD00_2_E00_1();
+          
+     choose_chn14();
+     TstC00_2_D00_1();
+       
+     choose_chn15();
+    TstC00_2_D00_1();
+    
+	if(Flag_Short)
+		{Junc_Short = 8;
+			Num_Short = 4;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstD16()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_D,PCA9555A_OutPutPort0,0xffbf);   //写0
+     delaynms(2);
+     _nop_();
+     
+     choose_chn0();
+     TstD00_2_E00_1();
+          	
+     choose_chn1();
+    TstD00_2_E00_1();
+        
+     choose_chn2();
+    TstD00_2_E00_1();
+         
+     choose_chn3();
+     TstD00_2_E00_1();
+     
+     choose_chn4();
+     TstD00_2_E00_1();
+     
+     choose_chn5();
+     TstD00_2_E00_1();
+          
+     choose_chn6();
+     TstD00_2_E00_1();
+               
+       choose_chn7();
+       //_nop_();
+     TstD00_2_E00_1();
+          
+     choose_chn8();
+     TstD00_2_E00_1();
+          
+     choose_chn9();
+     TstD00_2_E00_1();
+        
+      choose_chn10();
+     TstD00_2_E00_1();
+          
+     choose_chn11();
+    TstD00_2_E00_1();
+          
+     choose_chn12();
+    TstD00_2_E00_1();
+          
+     choose_chn13();
+     TstD00_2_E00_1();
+          
+     choose_chn14();
+     TstD00_2_E00_1();
+          
+     choose_chn15();
+     TstC00_2_D00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 8;
+			Num_Short = 5;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstD17()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_D,PCA9555A_OutPutPort0,0xff7f);   //写0
+     delaynms(2);
+     _nop_();
+     
+     choose_chn0();
+    TstD00_2_E00_1();
+          	
+     choose_chn1();
+    TstD00_2_E00_1();
+        
+     choose_chn2();
+    TstD00_2_E00_1();
+         
+     choose_chn3();
+    TstD00_2_E00_1();
+     
+     choose_chn4();
+    TstD00_2_E00_1();
+     
+     choose_chn5();
+     TstD00_2_E00_1();
+          
+     choose_chn6();
+     TstD00_2_E00_1();
+               
+       choose_chn7();
+       //_nop_();
+     TstD00_2_E00_1();
+      
+     choose_chn8();
+     TstD00_2_E00_1();
+          
+     choose_chn9();
+   TstD00_2_E00_1();
+        
+      choose_chn10();
+     TstD00_2_E00_1();
+          
+     choose_chn11();
+     TstD00_2_E00_1();
+          
+     choose_chn12();
+     TstD00_2_E00_1();
+          
+     choose_chn13();
+    TstD00_2_E00_1();
+          
+     choose_chn14();
+     TstD00_2_E00_1();
+          
+     choose_chn15();
+     TstD00_2_E00_1();
+	if(Flag_Short)
+		{Junc_Short = 8;
+			Num_Short = 6;} 
+	}
+}
+//-----------------------------------------------------------------------------	
+void TstE00()
+{if(!(Flag_Short))
+		{
+	SM_Send(CHIP_E,PCA9555A_OutPutPort0,0xfeff);   //写0
+     delaynms(2);
+     _nop_();
+     
+     choose_chn0();  
+     TstE00_2_F00_1();
+          	
+     choose_chn1();
+     TstD00_2_E00_1();
+     
+     choose_chn2();
+     TstD00_2_E00_1();
+       
+     choose_chn3();
+     TstD00_2_E00_1();
+     
+     choose_chn4();
+     TstD00_2_E00_1();
+     
+     choose_chn5();
+     TstD00_2_E00_1();
+        
+     choose_chn6();
+     TstD00_2_E00_1();
+            
+     choose_chn7();
+     TstD00_2_E00_1();
+     
+     choose_chn8();
+     TstD00_2_E00_1();
+        
+     choose_chn9();
+    TstD00_2_E00_1();
+     
+      choose_chn10();
+     TstD00_2_E00_1();
+        
+     choose_chn11();
+     TstD00_2_E00_1();
+     
+     choose_chn12();
+     TstD00_2_E00_1();
+       
+     choose_chn13();
+     TstD00_2_E00_1();
+      
+     choose_chn14();
+     TstD00_2_E00_1();
+        
+     choose_chn15();
+    TstD00_2_E00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 8;
+			Num_Short = 9;} 
+	}
+	}
+//-----------------------------------------------------------------------------
+void TstE01()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_E,PCA9555A_OutPutPort0,0xfdff);   //写0
+     delaynms(2);
+     _nop_();
+     
+     choose_chn0();
+     TstE00_2_F00_1();
+          	
+     choose_chn1();
+     TstE00_2_F00_1();
+        
+     choose_chn2();
+     TstD00_2_E00_1();
+     
+     choose_chn3();
+     TstD00_2_E00_1();
+     
+     choose_chn4();
+     TstD00_2_E00_1();
+     
+     choose_chn5();
+     TstD00_2_E00_1();
+       
+     choose_chn6();
+     TstD00_2_E00_1();
+            
+     choose_chn7();
+     TstD00_2_E00_1();
+      
+     choose_chn8();
+     TstD00_2_E00_1();
+       
+     choose_chn9();
+     TstD00_2_E00_1();
+     
+      choose_chn10();
+    TstD00_2_E00_1();
+    
+     choose_chn11();
+     TstD00_2_E00_1();
+     
+     choose_chn12();
+     TstD00_2_E00_1();
+     
+     choose_chn13();
+     TstD00_2_E00_1();
+     
+     choose_chn14();
+     TstD00_2_E00_1();
+     
+     choose_chn15();
+     TstD00_2_E00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 8;
+			Num_Short = 10;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstE02()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_E,PCA9555A_OutPutPort0,0xfbff);   //写0
+     delaynms(2);
+     _nop_();
+     
+     choose_chn0();
+     TstE00_2_F00_1();
+          	
+     choose_chn1();
+     _nop_();
+     TstE00_2_F00_1();
+        
+     choose_chn2();
+     TstE00_2_F00_1();
+         
+     choose_chn3();
+     TstD00_2_E00_1();
+     
+     choose_chn4();
+     TstD00_2_E00_1();
+     
+     choose_chn5();
+     TstD00_2_E00_1();
+       
+     choose_chn6();
+     TstD00_2_E00_1();
+             
+     choose_chn7();
+     TstD00_2_E00_1();
+     
+     choose_chn8();
+     TstD00_2_E00_1();
+      
+     choose_chn9();
+    TstD00_2_E00_1();
+    
+      choose_chn10();
+     TstD00_2_E00_1();
+      
+     choose_chn11();
+     TstD00_2_E00_1();
+     
+     choose_chn12();
+     TstD00_2_E00_1();
+     
+     choose_chn13();
+     TstD00_2_E00_1();
+       
+     choose_chn14();
+     TstD00_2_E00_1();
+       
+     choose_chn15();
+     TstD00_2_E00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 8;
+			Num_Short = 11;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstE03()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_E,PCA9555A_OutPutPort0,0xf7ff);   //写0
+     delaynms(2);
+     
+     _nop_();
+     choose_chn0();
+     TstE00_2_F00_1();
+          	
+     choose_chn1();
+     TstE00_2_F00_1();
+        
+     choose_chn2();
+     TstE00_2_F00_1();
+         
+     choose_chn3();
+     TstE00_2_F00_1();
+     
+     choose_chn4();
+     TstD00_2_E00_1();
+    
+     choose_chn5();
+     TstD00_2_E00_1();
+      
+     choose_chn6();
+     TstD00_2_E00_1();
+            
+     choose_chn7();
+     TstD00_2_E00_1();
+      
+     choose_chn8();
+     TstD00_2_E00_1();
+     
+     choose_chn9();
+     TstD00_2_E00_1();
+     
+      choose_chn10();
+     TstD00_2_E00_1();
+      
+     choose_chn11();
+     TstD00_2_E00_1();
+      
+     choose_chn12();
+     TstD00_2_E00_1();
+     
+     choose_chn13();
+     TstD00_2_E00_1();
+     
+     choose_chn14();
+     TstD00_2_E00_1();
+       
+     choose_chn15();
+     TstD00_2_E00_1();
+    
+	if(Flag_Short)
+		{Junc_Short = 8;
+			Num_Short = 12;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstE04()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_E,PCA9555A_OutPutPort0,0xefff);   //写0
+     delaynms(2);
+     
+     _nop_();
+     choose_chn0();
+     TstE00_2_F00_1();
+          	
+     choose_chn1();
+     TstE00_2_F00_1();
+        
+     choose_chn2();
+     TstE00_2_F00_1();
+         
+     choose_chn3();
+     TstE00_2_F00_1();
+     
+     choose_chn4();
+     TstE00_2_F00_1();
+     
+     choose_chn5();
+     TstD00_2_E00_1();
+       
+     choose_chn6();
+     TstD00_2_E00_1();
+           
+     choose_chn7();
+     TstD00_2_E00_1();
+     
+     choose_chn8();
+     TstD00_2_E00_1();
+    
+     choose_chn9();
+     TstD00_2_E00_1();
+     
+      choose_chn10();
+     TstD00_2_E00_1();
+      
+     choose_chn11();
+    TstD00_2_E00_1();
+    
+     choose_chn12();
+    TstD00_2_E00_1();
+     
+     choose_chn13();
+    TstD00_2_E00_1();
+    
+     choose_chn14();
+     TstD00_2_E00_1();
+    
+     choose_chn15();
+     TstD00_2_E00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 8;
+			Num_Short = 13;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstE05()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_E,PCA9555A_OutPutPort0,0xdfff);   //写0
+     delaynms(2);
+     
+     _nop_();
+     choose_chn0();
+     TstE00_2_F00_1();
+          	
+     choose_chn1();
+     TstE00_2_F00_1();
+        
+     choose_chn2();
+     TstE00_2_F00_1();
+         
+     choose_chn3();
+     TstE00_2_F00_1();
+     
+     choose_chn4();
+     TstE00_2_F00_1();
+     
+     choose_chn5();
+     TstE00_2_F00_1();
+          
+     choose_chn6();
+    TstD00_2_E00_1();
+    
+     choose_chn7();
+     TstD00_2_E00_1();
+     
+     choose_chn8();
+     TstD00_2_E00_1();
+     
+     choose_chn9();
+    TstD00_2_E00_1();
+    
+      choose_chn10();
+     TstD00_2_E00_1();
+     
+     choose_chn11();
+     TstD00_2_E00_1();
+     
+     choose_chn12();
+     TstD00_2_E00_1();
+       
+     choose_chn13();
+     TstD00_2_E00_1();
+     
+     choose_chn14();
+     TstD00_2_E00_1();
+     
+     choose_chn15();
+     TstD00_2_E00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 8;
+			Num_Short = 14;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstE06()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_E,PCA9555A_OutPutPort0,0xbfff);   //写0
+     delaynms(2);
+     
+     _nop_();
+     choose_chn0();
+     TstE00_2_F00_1();
+          	
+     choose_chn1();
+     TstE00_2_F00_1();
+        
+     choose_chn2();
+     TstE00_2_F00_1();
+         
+     choose_chn3();
+     TstE00_2_F00_1();
+     
+     choose_chn4();
+     TstE00_2_F00_1();
+     
+     choose_chn5();
+     TstE00_2_F00_1();
+          
+     choose_chn6();
+     TstE00_2_F00_1();
+               
+     choose_chn7();
+     TstD00_2_E00_1();
+      
+     choose_chn8();
+     TstD00_2_E00_1();
+      
+     choose_chn9();
+     TstD00_2_E00_1();
+    
+      choose_chn10();
+     TstD00_2_E00_1();
+     
+     choose_chn11();
+    TstD00_2_E00_1();
+    
+     choose_chn12();
+    TstD00_2_E00_1();
+    
+     choose_chn13();
+     TstD00_2_E00_1();
+     
+     choose_chn14();
+     TstD00_2_E00_1();
+     
+     choose_chn15();
+    TstD00_2_E00_1();
+    
+	if(Flag_Short)
+		{Junc_Short = 8;
+			Num_Short = 15;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstE07()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_E,PCA9555A_OutPutPort0,0x7fff);   //写0
+     delaynms(2);
+     
+     _nop_();
+     choose_chn0();
+     TstE00_2_F00_1();
+          	
+     choose_chn1();
+     TstE00_2_F00_1();
+        
+     choose_chn2();
+     TstE00_2_F00_1();
+         
+     choose_chn3();
+     TstE00_2_F00_1();
+     
+     choose_chn4();
+     TstE00_2_F00_1();
+     
+     choose_chn5();
+     TstE00_2_F00_1();
+          
+     choose_chn6();
+     TstE00_2_F00_1();
+               
+       choose_chn7();
+       //_nop_();
+      TstE00_2_F00_1();
+       
+     choose_chn8();
+    TstD00_2_E00_1();
+    
+     choose_chn9();
+    TstD00_2_E00_1();
+    
+      choose_chn10();
+    TstD00_2_E00_1();
+    
+     choose_chn11();
+     TstD00_2_E00_1();
+     
+     choose_chn12();
+     TstD00_2_E00_1();
+     
+     choose_chn13();
+     TstD00_2_E00_1();
+     
+     choose_chn14();
+     TstD00_2_E00_1();
+      
+     choose_chn15();
+     TstD00_2_E00_1();
+     
+  if(Flag_Short)
+		{Junc_Short = 8;
+			Num_Short = 16;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstE10()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_E,PCA9555A_OutPutPort0,0xfffe);   //写0
+     delaynms(2);
+     
+     _nop_();
+     choose_chn0();
+     TstE00_2_F00_1();
+          	
+     choose_chn1();
+     TstE00_2_F00_1();
+        
+     choose_chn2();
+     TstE00_2_F00_1();
+         
+     choose_chn3();
+     TstE00_2_F00_1();
+     
+     choose_chn4();
+     TstE00_2_F00_1();
+     
+     choose_chn5();
+     TstE00_2_F00_1();
+          
+     choose_chn6();
+     TstE00_2_F00_1();
+               
+       choose_chn7();
+       //_nop_();
+     TstE00_2_F00_1();
+       
+     choose_chn8();
+     TstE00_2_F00_1();
+          
+     choose_chn9();
+     TstD00_2_E00_1();
+    
+      choose_chn10();
+    TstD00_2_E00_1();
+    
+     choose_chn11();
+    TstD00_2_E00_1();
+    
+     choose_chn12();
+     TstD00_2_E00_1();
+     
+     choose_chn13();
+     TstD00_2_E00_1();
+     
+     choose_chn14();
+     TstD00_2_E00_1();
+     
+     choose_chn15();
+     TstD00_2_E00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 2;
+			Num_Short = 7;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstE11()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_E,PCA9555A_OutPutPort0,0xfffd);   //写0
+     delaynms(2);
+     
+     _nop_();
+     choose_chn0();
+     TstE00_2_F00_1();
+          	
+     choose_chn1();
+     TstE00_2_F00_1();
+        
+     choose_chn2();
+     TstE00_2_F00_1();
+         
+     choose_chn3();
+     TstE00_2_F00_1();
+     
+     choose_chn4();
+     TstE00_2_F00_1();
+     
+     choose_chn5();
+     TstE00_2_F00_1();
+          
+     choose_chn6();
+     TstE00_2_F00_1();
+               
+       choose_chn7();
+     TstE00_2_F00_1();
+       
+     choose_chn8();
+     TstE00_2_F00_1();
+          
+     choose_chn9();
+     TstE00_2_F00_1();
+        
+      choose_chn10();
+    TstD00_2_E00_1();
+      
+     choose_chn11();
+    TstD00_2_E00_1();
+     
+     choose_chn12();
+     TstD00_2_E00_1();
+       
+     choose_chn13();
+     TstD00_2_E00_1();
+     
+     choose_chn14();
+    TstD00_2_E00_1();
+      
+     choose_chn15();
+     TstD00_2_E00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 2;
+			Num_Short = 8;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstE12()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_E,PCA9555A_OutPutPort0,0xfffb);   //写0
+     delaynms(2);
+     
+     _nop_();
+     choose_chn0();
+     TstE00_2_F00_1();
+          	
+     choose_chn1();
+     TstE00_2_F00_1();
+        
+     choose_chn2();
+     TstE00_2_F00_1();
+         
+     choose_chn3();
+     TstE00_2_F00_1();
+     
+     choose_chn4();
+     TstE00_2_F00_1();
+     
+     choose_chn5();
+     TstE00_2_F00_1();
+          
+     choose_chn6();
+     TstE00_2_F00_1();
+               
+      choose_chn7();
+      //_nop_();
+     TstE00_2_F00_1();
+           
+     choose_chn8();
+     TstE00_2_F00_1();
+          
+     choose_chn9();
+    TstE00_2_F00_1();
+        
+      choose_chn10();
+     TstE00_2_F00_1();
+          
+      choose_chn11();
+    TstD00_2_E00_1();  
+   
+     choose_chn12();
+    TstD00_2_E00_1();
+     
+     choose_chn13();
+    TstD00_2_E00_1();
+      
+     choose_chn14();
+     TstD00_2_E00_1();
+      
+     choose_chn15();
+    TstD00_2_E00_1();
+    
+	if(Flag_Short)
+		{Junc_Short = 2;
+			Num_Short = 9;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstE13()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_E,PCA9555A_OutPutPort0,0xfff7);   //写0
+     delaynms(2);
+     
+     _nop_();
+     choose_chn0();
+    TstE00_2_F00_1();
+          	
+     choose_chn1();
+     TstE00_2_F00_1();
+        
+     choose_chn2();
+     TstE00_2_F00_1();
+         
+     choose_chn3();
+     TstE00_2_F00_1();
+     
+     choose_chn4();
+    TstE00_2_F00_1();
+     
+     choose_chn5();
+    TstE00_2_F00_1();
+          
+     choose_chn6();
+     TstE00_2_F00_1();
+               
+       choose_chn7();
+       //_nop_();
+     TstE00_2_F00_1();
+             
+     choose_chn8();
+     TstE00_2_F00_1();
+          
+     choose_chn9();
+     TstE00_2_F00_1();
+        
+      choose_chn10();
+     TstE00_2_F00_1();
+          
+     choose_chn11();
+     TstE00_2_F00_1();
+          
+     choose_chn12();
+     TstD00_2_E00_1();
+      
+     choose_chn13();
+     TstD00_2_E00_1();
+        
+     choose_chn14();
+     TstD00_2_E00_1();
+        
+     choose_chn15();
+     TstD00_2_E00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 5;
+			Num_Short = 5;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstE14()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_E,PCA9555A_OutPutPort0,0xffef);   //写0
+     delaynms(2);
+     _nop_();
+     
+     choose_chn0();
+     TstE00_2_F00_1();
+          	
+     choose_chn1();
+     TstE00_2_F00_1();
+        
+     choose_chn2();
+     TstE00_2_F00_1();
+         
+     choose_chn3();
+     TstE00_2_F00_1();
+     
+     choose_chn4();
+     TstE00_2_F00_1();
+     
+     choose_chn5();
+     TstE00_2_F00_1();
+          
+     choose_chn6();
+     TstE00_2_F00_1();
+     
+      choose_chn7();
+      //_nop_();
+     TstE00_2_F00_1();
+               
+     choose_chn8();
+     TstE00_2_F00_1();
+          
+     choose_chn9();
+     TstE00_2_F00_1();
+        
+      choose_chn10();
+     TstE00_2_F00_1();
+          
+     choose_chn11();
+     TstE00_2_F00_1();
+          
+     choose_chn12();
+     TstE00_2_F00_1();
+          
+     choose_chn13();
+     TstD00_2_E00_1();
+        
+     choose_chn14();
+     TstD00_2_E00_1();
+       
+     choose_chn15();
+     TstD00_2_E00_1();
+    
+	if(Flag_Short)
+		{Junc_Short = 5;
+			Num_Short = 6;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstE15()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_E,PCA9555A_OutPutPort0,0xffdf);   //写0
+     delaynms(2);
+     _nop_();
+     
+     choose_chn0();
+     TstE00_2_F00_1();
+          	
+     choose_chn1();
+     TstE00_2_F00_1();
+        
+     choose_chn2();
+     TstE00_2_F00_1();
+         
+     choose_chn3();
+     TstE00_2_F00_1();
+     
+     choose_chn4();
+     TstE00_2_F00_1();
+     
+     choose_chn5();
+     TstE00_2_F00_1();
+          
+     choose_chn6();
+     TstE00_2_F00_1();
+               
+     choose_chn7();
+     //_nop_();
+     TstE00_2_F00_1();
+            
+     choose_chn8();
+     TstE00_2_F00_1();
+          
+     choose_chn9();
+    TstE00_2_F00_1();
+        
+      choose_chn10();
+    TstE00_2_F00_1();
+          
+     choose_chn11();
+     TstE00_2_F00_1();
+          
+     choose_chn12();
+    TstE00_2_F00_1();
+          
+     choose_chn13();
+     TstE00_2_F00_1();
+          
+     choose_chn14();
+     TstD00_2_E00_1();
+       
+     choose_chn15();
+    TstD00_2_E00_1();
+    
+	if(Flag_Short)
+		{Junc_Short = 7;
+			Num_Short = 8;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstE16()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_E,PCA9555A_OutPutPort0,0xffbf);   //写0
+     delaynms(2);
+     _nop_();
+     
+     choose_chn0();
+     TstE00_2_F00_1();
+          	
+     choose_chn1();
+    TstE00_2_F00_1();
+        
+     choose_chn2();
+    TstE00_2_F00_1();
+         
+     choose_chn3();
+     TstE00_2_F00_1();
+     
+     choose_chn4();
+     TstE00_2_F00_1();
+     
+     choose_chn5();
+     TstE00_2_F00_1();
+          
+     choose_chn6();
+     TstE00_2_F00_1();
+               
+       choose_chn7();
+       //_nop_();
+     TstE00_2_F00_1();
+          
+     choose_chn8();
+     TstE00_2_F00_1();
+          
+     choose_chn9();
+     TstE00_2_F00_1();
+        
+      choose_chn10();
+     TstE00_2_F00_1();
+          
+     choose_chn11();
+    TstE00_2_F00_1();
+          
+     choose_chn12();
+    TstE00_2_F00_1();
+          
+     choose_chn13();
+     TstE00_2_F00_1();
+          
+     choose_chn14();
+     TstE00_2_F00_1();
+          
+     choose_chn15();
+     TstD00_2_E00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 7;
+			Num_Short = 9;} 
+	}
+}
+//-----------------------------------------------------------------------------
+void TstE17()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_E,PCA9555A_OutPutPort0,0xff7f);   //写0
+     delaynms(2);
+     
+     choose_chn0();
+    TstE00_2_F00_1();
+          	
+     choose_chn1();
+    TstE00_2_F00_1();
+        
+     choose_chn2();
+    TstE00_2_F00_1();
+         
+     choose_chn3();
+    TstE00_2_F00_1();
+     
+     choose_chn4();
+    TstE00_2_F00_1();
+     
+     choose_chn5();
+     TstE00_2_F00_1();
+          
+     choose_chn6();
+     TstE00_2_F00_1();
+               
+       choose_chn7();
+       //_nop_();
+     TstE00_2_F00_1();
+      
+     choose_chn8();
+     TstE00_2_F00_1();
+          
+     choose_chn9();
+   TstE00_2_F00_1();
+        
+      choose_chn10();
+     TstE00_2_F00_1();
+          
+     choose_chn11();
+     TstE00_2_F00_1();
+          
+     choose_chn12();
+     TstE00_2_F00_1();
+          
+     choose_chn13();
+    TstE00_2_F00_1();
+          
+     choose_chn14();
+     TstE00_2_F00_1();
+          
+     choose_chn15();
+     TstE00_2_F00_1();
+	if(Flag_Short)
+		{Junc_Short = 7;
+			Num_Short = 10;} 
+	}
+} 
+
+//-----------------------------------------------------------------------------
+void TstF00()
+{if(!(Flag_Short))
+		{
+	SM_Send(CHIP_F,PCA9555A_OutPutPort0,0xfeff);   //写0
+     delaynms(2);
+     _nop_();
+     
+//     choose_chn0();  
+//     TstE00_2_F00_1();
+          	
+     choose_chn1();
+     TstE00_2_F00_1();
+     
+     choose_chn2();
+     TstE00_2_F00_1();
+       
+     choose_chn3();
+     TstE00_2_F00_1();
+     
+     choose_chn4();
+     TstE00_2_F00_1();
+     
+     choose_chn5();
+     TstE00_2_F00_1();
+        
+     choose_chn6();
+     TstE00_2_F00_1();
+            
+     choose_chn7();
+     TstE00_2_F00_1();
+     
+     choose_chn8();
+     TstE00_2_F00_1();
+        
+     choose_chn9();
+    TstE00_2_F00_1();
+     
+      choose_chn10();
+     TstE00_2_F00_1();
+        
+     choose_chn11();
+     TstE00_2_F00_1();
+     
+     choose_chn12();
+     TstE00_2_F00_1();
+       
+     choose_chn13();
+     TstE00_2_F00_1();
+      
+     choose_chn14();
+     TstE00_2_F00_1();
+        
+     choose_chn15();
+    TstE00_2_F00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 8;
+			Num_Short = 7;} 
+	}
+	}
+//-----------------------------------------------------------------------------
+void TstF01()
+{
+	if(!(Flag_Short))
+		{
+	SM_Send(CHIP_F,PCA9555A_OutPutPort0,0xfdff);   //写0
+     delaynms(2);
+     _nop_();
+//     choose_chn0();
+//     TstE00_2_F00_1();
+//          	
+//     choose_chn1();
+//     TstE00_2_F00_1();
+        
+     choose_chn2();
+     TstE00_2_F00_1();
+     
+     choose_chn3();
+     TstE00_2_F00_1();
+     
+     choose_chn4();
+     TstE00_2_F00_1();
+     
+     choose_chn5();
+     TstE00_2_F00_1();
+       
+     choose_chn6();
+     TstE00_2_F00_1();
+            
+     choose_chn7();
+     TstE00_2_F00_1();
+      
+     choose_chn8();
+     TstE00_2_F00_1();
+       
+     choose_chn9();
+     TstE00_2_F00_1();
+     
+      choose_chn10();
+    TstE00_2_F00_1();
+    
+     choose_chn11();
+     TstE00_2_F00_1();
+     
+     choose_chn12();
+     TstE00_2_F00_1();
+     
+     choose_chn13();
+     TstE00_2_F00_1();
+     
+     choose_chn14();
+     TstE00_2_F00_1();
+     
+     choose_chn15();
+     TstE00_2_F00_1();
+     
+	if(Flag_Short)
+		{Junc_Short = 8;
+			Num_Short = 8;} 
+	}
+}
+//-----------------------------------------------------------------------------
+//void TstF02()                //测试引脚到F02为止后面为空，因此不测试
+//{
+//	if(!(Flag_Short))
+//		{
+//	SM_Send(CHIP_F,PCA9555A_OutPutPort0,0xfbff);   //写0
+//     //delaynms(10);
+//     _nop_();
+////     choose_chn0();
+////     TstE00_2_F00_1();
+////          	
+////     choose_chn1();
+////     TstE00_2_F00_1();
+////        
+////     choose_chn2();
+////     TstE00_2_F00_1();
+//         
+//     choose_chn3();
+//     TstE00_2_F00_1();
+//     
+//     choose_chn4();
+//     TstE00_2_F00_1();
+//     
+//     choose_chn5();
+//     TstE00_2_F00_1();
+//       
+//     choose_chn6();
+//     TstE00_2_F00_1();
+//             
+//     choose_chn7();
+//     TstE00_2_F00_1();
+//     
+//     choose_chn8();
+//     TstE00_2_F00_1();
+//      
+//     choose_chn9();
+//    TstE00_2_F00_1();
+//    
+//      choose_chn10();
+//     TstE00_2_F00_1();
+//      
+//     choose_chn11();
+//     TstE00_2_F00_1();
+//     
+//     choose_chn12();
+//     TstE00_2_F00_1();
+//     
+//     choose_chn13();
+//     TstE00_2_F00_1();
+//       
+//     choose_chn14();
+//     TstE00_2_F00_1();
+//       
+//     choose_chn15();
+//     TstE00_2_F00_1();
+//     
+//	if(Flag_Short)
+//		{Junc_Short = 1;
+//			Num_Short = 1;} 
+//	}
+//}
+////-----------------------------------------------------------------------------
+//void TstF03()
+//{
+//	if(!(Flag_Short))
+//		{
+//	SM_Send(CHIP_F,PCA9555A_OutPutPort0,0xf7ff);   //写0
+//     //delaynms(10);
+//     _nop_();
+////     choose_chn0();
+////     TstE00_2_F00_1();
+////          	
+////     choose_chn1();
+////     TstE00_2_F00_1();
+////        
+////     choose_chn2();
+////     TstE00_2_F00_1();
+////         
+////     choose_chn3();
+////     TstE00_2_F00_1();
+//     
+//     choose_chn4();
+//     TstE00_2_F00_1();
+//    
+//     choose_chn5();
+//     TstE00_2_F00_1();
+//      
+//     choose_chn6();
+//     TstE00_2_F00_1();
+//            
+//     choose_chn7();
+//     TstE00_2_F00_1();
+//      
+//     choose_chn8();
+//     TstE00_2_F00_1();
+//     
+//     choose_chn9();
+//     TstE00_2_F00_1();
+//     
+//      choose_chn10();
+//     TstE00_2_F00_1();
+//      
+//     choose_chn11();
+//     TstE00_2_F00_1();
+//      
+//     choose_chn12();
+//     TstE00_2_F00_1();
+//     
+//     choose_chn13();
+//     TstE00_2_F00_1();
+//     
+//     choose_chn14();
+//     TstE00_2_F00_1();
+//       
+//     choose_chn15();
+//     TstE00_2_F00_1();
+//    
+//	if(Flag_Short)
+//		{Junc_Short = 1;
+//			Num_Short = 1;} 
+//	}
+//}
+////-----------------------------------------------------------------------------
+//void TstF04()
+//{
+//	if(!(Flag_Short))
+//		{
+//	SM_Send(CHIP_F,PCA9555A_OutPutPort0,0xefff);   //写0
+//     //delaynms(10);
+//     _nop_();
+////     choose_chn0();
+////     TstE00_2_F00_1();
+////          	
+////     choose_chn1();
+////     TstE00_2_F00_1();
+////        
+////     choose_chn2();
+////     TstE00_2_F00_1();
+////         
+////     choose_chn3();
+////     TstE00_2_F00_1();
+////     
+////     choose_chn4();
+////     TstE00_2_F00_1();
+//     
+//     choose_chn5();
+//     TstE00_2_F00_1();
+//       
+//     choose_chn6();
+//     TstE00_2_F00_1();
+//           
+//     choose_chn7();
+//     TstE00_2_F00_1();
+//     
+//     choose_chn8();
+//     TstE00_2_F00_1();
+//    
+//     choose_chn9();
+//     TstE00_2_F00_1();
+//     
+//      choose_chn10();
+//     TstE00_2_F00_1();
+//      
+//     choose_chn11();
+//    TstE00_2_F00_1();
+//    
+//     choose_chn12();
+//    TstE00_2_F00_1();
+//     
+//     choose_chn13();
+//    TstE00_2_F00_1();
+//    
+//     choose_chn14();
+//     TstE00_2_F00_1();
+//    
+//     choose_chn15();
+//     TstE00_2_F00_1();
+//     
+//	if(Flag_Short)
+//		{Junc_Short = 1;
+//			Num_Short = 1;} 
+//	}
+//}
+////-----------------------------------------------------------------------------
+//void TstF05()
+//{
+//	if(!(Flag_Short))
+//		{
+//	SM_Send(CHIP_F,PCA9555A_OutPutPort0,0xdfff);   //写0
+//     //delaynms(10);
+//     _nop_();
+////     choose_chn0();
+////     TstE00_2_F00_1();
+////          	
+////     choose_chn1();
+////     TstE00_2_F00_1();
+////        
+////     choose_chn2();
+////     TstE00_2_F00_1();
+////         
+////     choose_chn3();
+////     TstE00_2_F00_1();
+////     
+////     choose_chn4();
+////     TstE00_2_F00_1();
+////     
+////     choose_chn5();
+////     TstE00_2_F00_1();
+//          
+//     choose_chn6();
+//    TstE00_2_F00_1();
+//    
+//     choose_chn7();
+//     TstE00_2_F00_1();
+//     
+//     choose_chn8();
+//     TstE00_2_F00_1();
+//     
+//     choose_chn9();
+//    TstE00_2_F00_1();
+//    
+//      choose_chn10();
+//     TstE00_2_F00_1();
+//     
+//     choose_chn11();
+//     TstE00_2_F00_1();
+//     
+//     choose_chn12();
+//     TstE00_2_F00_1();
+//       
+//     choose_chn13();
+//     TstE00_2_F00_1();
+//     
+//     choose_chn14();
+//     TstE00_2_F00_1();
+//     
+//     choose_chn15();
+//     TstE00_2_F00_1();
+//     
+//	if(Flag_Short)
+//		{Junc_Short = 1;
+//			Num_Short = 1;} 
+//	}
+//}
+////-----------------------------------------------------------------------------
+//void TstF06()
+//{
+//	if(!(Flag_Short))
+//		{
+//	SM_Send(CHIP_F,PCA9555A_OutPutPort0,0xbfff);   //写0
+//     //delaynms(10);
+//     _nop_();
+////     choose_chn0();
+////     TstE00_2_F00_1();
+////          	
+////     choose_chn1();
+////     TstE00_2_F00_1();
+////        
+////     choose_chn2();
+////     TstE00_2_F00_1();
+////         
+////     choose_chn3();
+////     TstE00_2_F00_1();
+////     
+////     choose_chn4();
+////     TstE00_2_F00_1();
+////     
+////     choose_chn5();
+////     TstE00_2_F00_1();
+////          
+////     choose_chn6();
+////     TstE00_2_F00_1();
+//               
+//     choose_chn7();
+//     TstE00_2_F00_1();
+//      
+//     choose_chn8();
+//     TstE00_2_F00_1();
+//      
+//     choose_chn9();
+//     TstE00_2_F00_1();
+//    
+//      choose_chn10();
+//     TstE00_2_F00_1();
+//     
+//     choose_chn11();
+//    TstE00_2_F00_1();
+//    
+//     choose_chn12();
+//    TstE00_2_F00_1();
+//    
+//     choose_chn13();
+//     TstE00_2_F00_1();
+//     
+//     choose_chn14();
+//     TstE00_2_F00_1();
+//     
+//     choose_chn15();
+//    TstE00_2_F00_1();
+//    
+//	if(Flag_Short)
+//		{Junc_Short = 1;
+//			Num_Short = 1;} 
+//	}
+//}
+////-----------------------------------------------------------------------------
+//void TstF07()
+//{
+//	if(!(Flag_Short))
+//		{
+//	SM_Send(CHIP_F,PCA9555A_OutPutPort0,0x7fff);   //写0
+//     //delaynms(10);
+//     _nop_();
+////     choose_chn0();
+////     TstE00_2_F00_1();
+////          	
+////     choose_chn1();
+////     TstE00_2_F00_1();
+////        
+////     choose_chn2();
+////     TstE00_2_F00_1();
+////         
+////     choose_chn3();
+////     TstE00_2_F00_1();
+////     
+////     choose_chn4();
+////     TstE00_2_F00_1();
+////     
+////     choose_chn5();
+////     TstE00_2_F00_1();
+////          
+////     choose_chn6();
+////     TstE00_2_F00_1();
+////               
+////       choose_chn7();
+////       _nop_();
+////      TstE00_2_F00_1();
+//       
+//     choose_chn8();
+//    TstE00_2_F00_1();
+//    
+//     choose_chn9();
+//    TstE00_2_F00_1();
+//    
+//      choose_chn10();
+//    TstE00_2_F00_1();
+//    
+//     choose_chn11();
+//     TstE00_2_F00_1();
+//     
+//     choose_chn12();
+//     TstE00_2_F00_1();
+//     
+//     choose_chn13();
+//     TstE00_2_F00_1();
+//     
+//     choose_chn14();
+//     TstE00_2_F00_1();
+//      
+//     choose_chn15();
+//     TstE00_2_F00_1();
+//     
+//  if(Flag_Short)
+//		{Junc_Short = 1;
+//			Num_Short = 1;} 
+//	}
+//}
+////-----------------------------------------------------------------------------
+//void TstF10()
+//{
+//	if(!(Flag_Short))
+//		{
+//	SM_Send(CHIP_F,PCA9555A_OutPutPort0,0xfffe);   //写0
+//     //delaynms(10);
+//     _nop_();
+////     choose_chn0();
+////     TstE00_2_F00_1();
+////          	
+////     choose_chn1();
+////     TstE00_2_F00_1();
+////        
+////     choose_chn2();
+////     TstE00_2_F00_1();
+////         
+////     choose_chn3();
+////     TstE00_2_F00_1();
+////     
+////     choose_chn4();
+////     TstE00_2_F00_1();
+////     
+////     choose_chn5();
+////     TstE00_2_F00_1();
+////          
+////     choose_chn6();
+////     TstE00_2_F00_1();
+////               
+////       choose_chn7();
+////       _nop_();
+////     TstE00_2_F00_1();
+////       
+////     choose_chn8();
+////     TstE00_2_F00_1();
+//          
+//     choose_chn9();
+//     TstE00_2_F00_1();
+//    
+//      choose_chn10();
+//    TstE00_2_F00_1();
+//    
+//     choose_chn11();
+//    TstE00_2_F00_1();
+//    
+//     choose_chn12();
+//     TstE00_2_F00_1();
+//     
+//     choose_chn13();
+//     TstE00_2_F00_1();
+//     
+//     choose_chn14();
+//     TstE00_2_F00_1();
+//     
+//     choose_chn15();
+//     TstE00_2_F00_1();
+//     
+//	if(Flag_Short)
+//		{Junc_Short = 1;
+//			Num_Short = 1;} 
+//	}
+//}
+////-----------------------------------------------------------------------------
+//void TstF11()
+//{
+//	if(!(Flag_Short))
+//		{
+//	SM_Send(CHIP_F,PCA9555A_OutPutPort0,0xfffd);   //写0
+//     //delaynms(10);
+//     _nop_();
+////     choose_chn0();
+////     TstE00_2_F00_1();
+////          	
+////     choose_chn1();
+////     TstE00_2_F00_1();
+////        
+////     choose_chn2();
+////     TstE00_2_F00_1();
+////         
+////     choose_chn3();
+////     TstE00_2_F00_1();
+////     
+////     choose_chn4();
+////     TstE00_2_F00_1();
+////     
+////     choose_chn5();
+////     TstE00_2_F00_1();
+////          
+////     choose_chn6();
+////     TstE00_2_F00_1();
+////               
+////       choose_chn7();
+////     TstE00_2_F00_1();
+////       
+////     choose_chn8();
+////     TstE00_2_F00_1();
+////          
+////     choose_chn9();
+////     TstE00_2_F00_1();
+//        
+//      choose_chn10();
+//    TstE00_2_F00_1();
+//      
+//     choose_chn11();
+//    TstE00_2_F00_1();
+//     
+//     choose_chn12();
+//     TstE00_2_F00_1();
+//       
+//     choose_chn13();
+//     TstE00_2_F00_1();
+//     
+//     choose_chn14();
+//    TstE00_2_F00_1();
+//      
+//     choose_chn15();
+//     TstE00_2_F00_1();
+//     
+//	if(Flag_Short)
+//		{Junc_Short = 1;
+//			Num_Short = 1;} 
+//	}
+//}
+////-----------------------------------------------------------------------------
+//void TstF12()
+//{
+//	if(!(Flag_Short))
+//		{
+//	SM_Send(CHIP_F,PCA9555A_OutPutPort0,0xfffb);   //写0
+//     //delaynms(10);
+//     _nop_();
+////     choose_chn0();
+////     TstE00_2_F00_1();
+////          	
+////     choose_chn1();
+////     TstE00_2_F00_1();
+////        
+////     choose_chn2();
+////     TstE00_2_F00_1();
+////         
+////     choose_chn3();
+////     TstE00_2_F00_1();
+////     
+////     choose_chn4();
+////     TstE00_2_F00_1();
+////     
+////     choose_chn5();
+////     TstE00_2_F00_1();
+////          
+////     choose_chn6();
+////     TstE00_2_F00_1();
+////               
+////      choose_chn7();
+////      _nop_();
+////     TstE00_2_F00_1();
+////           
+////     choose_chn8();
+////     TstE00_2_F00_1();
+////          
+////     choose_chn9();
+////    TstE00_2_F00_1();
+////        
+////      choose_chn10();
+////     TstE00_2_F00_1();
+//          
+//      choose_chn11();
+//    TstE00_2_F00_1();  
+//   
+//     choose_chn12();
+//    TstE00_2_F00_1();
+//     
+//     choose_chn13();
+//    TstE00_2_F00_1();
+//      
+//     choose_chn14();
+//     TstE00_2_F00_1();
+//      
+//     choose_chn15();
+//    TstE00_2_F00_1();
+//    
+//	if(Flag_Short)
+//		{Junc_Short = 1;
+//			Num_Short = 1;} 
+//	}
+//}
+////-----------------------------------------------------------------------------
+//void TstF13()
+//{
+//	if(!(Flag_Short))
+//		{
+//	SM_Send(CHIP_F,PCA9555A_OutPutPort0,0xfff7);   //写0
+//     //delaynms(10);
+//     _nop_();
+////     choose_chn0();
+////    TstE00_2_F00_1();
+////          	
+////     choose_chn1();
+////     TstE00_2_F00_1();
+////        
+////     choose_chn2();
+////     TstE00_2_F00_1();
+////         
+////     choose_chn3();
+////     TstE00_2_F00_1();
+////     
+////     choose_chn4();
+////    TstE00_2_F00_1();
+////     
+////     choose_chn5();
+////    TstE00_2_F00_1();
+////          
+////     choose_chn6();
+////     TstE00_2_F00_1();
+////               
+////       choose_chn7();
+////       _nop_();
+////     TstE00_2_F00_1();
+////             
+////     choose_chn8();
+////     TstE00_2_F00_1();
+////          
+////     choose_chn9();
+////     TstE00_2_F00_1();
+////        
+////      choose_chn10();
+////     TstE00_2_F00_1();
+////          
+////     choose_chn11();
+////     TstE00_2_F00_1();
+//          
+//     choose_chn12();
+//     TstE00_2_F00_1();
+//      
+//     choose_chn13();
+//     TstE00_2_F00_1();
+//        
+//     choose_chn14();
+//     TstE00_2_F00_1();
+//        
+//     choose_chn15();
+//     TstE00_2_F00_1();
+//     
+//	if(Flag_Short)
+//		{Junc_Short = 1;
+//			Num_Short = 1;} 
+//	}
+//}
+////-----------------------------------------------------------------------------
+//void TstF14()
+//{
+//	if(!(Flag_Short))
+//		{
+//	SM_Send(CHIP_F,PCA9555A_OutPutPort0,0xffef);   //写0
+//     //delaynms(10);
+//     _nop_();
+////     choose_chn0();
+////     TstE00_2_F00_1();
+////          	
+////     choose_chn1();
+////     TstE00_2_F00_1();
+////        
+////     choose_chn2();
+////     TstE00_2_F00_1();
+////         
+////     choose_chn3();
+////     TstE00_2_F00_1();
+////     
+////     choose_chn4();
+////     TstE00_2_F00_1();
+////     
+////     choose_chn5();
+////     TstE00_2_F00_1();
+////          
+////     choose_chn6();
+////     TstE00_2_F00_1();
+////     
+////      choose_chn7();
+////      _nop_();
+////     TstE00_2_F00_1();
+////               
+////     choose_chn8();
+////     TstE00_2_F00_1();
+////          
+////     choose_chn9();
+////     TstE00_2_F00_1();
+////        
+////      choose_chn10();
+////     TstE00_2_F00_1();
+////          
+////     choose_chn11();
+////     TstE00_2_F00_1();
+////          
+////     choose_chn12();
+////     TstE00_2_F00_1();
+//          
+//     choose_chn13();
+//     TstE00_2_F00_1();
+//        
+//     choose_chn14();
+//     TstE00_2_F00_1();
+//       
+//     choose_chn15();
+//     TstE00_2_F00_1();
+//    
+//	if(Flag_Short)
+//		{Junc_Short = 1;
+//			Num_Short = 1;} 
+//	}
+//}
+////-----------------------------------------------------------------------------
+//void TstF15()
+//{
+//	if(!(Flag_Short))
+//		{
+//	SM_Send(CHIP_F,PCA9555A_OutPutPort0,0xffdf);   //写0
+//     //delaynms(10);
+//     _nop_();
+////     choose_chn0();
+////     TstE00_2_F00_1();
+////          	
+////     choose_chn1();
+////     TstE00_2_F00_1();
+////        
+////     choose_chn2();
+////     TstE00_2_F00_1();
+////         
+////     choose_chn3();
+////     TstE00_2_F00_1();
+////     
+////     choose_chn4();
+////     TstE00_2_F00_1();
+////     
+////     choose_chn5();
+////     TstE00_2_F00_1();
+////          
+////     choose_chn6();
+////     TstE00_2_F00_1();
+////               
+////     choose_chn7();
+////     _nop_();
+////     TstE00_2_F00_1();
+////            
+////     choose_chn8();
+////     TstE00_2_F00_1();
+////          
+////     choose_chn9();
+////    TstE00_2_F00_1();
+////        
+////      choose_chn10();
+////    TstE00_2_F00_1();
+////          
+////     choose_chn11();
+////     TstE00_2_F00_1();
+////          
+////     choose_chn12();
+////    TstE00_2_F00_1();
+////          
+////     choose_chn13();
+////     TstE00_2_F00_1();
+//          
+//     choose_chn14();
+//     TstE00_2_F00_1();
+//       
+//     choose_chn15();
+//    TstE00_2_F00_1();
+//    
+//	if(Flag_Short)
+//		{Junc_Short = 1;
+//			Num_Short = 1;} 
+//	}
+//}
+////-----------------------------------------------------------------------------
+//void TstF16()
+//{
+//	if(!(Flag_Short))
+//		{
+//	SM_Send(CHIP_F,PCA9555A_OutPutPort0,0xffbf);   //写0
+//     //delaynms(10);
+//     _nop_();
+////     choose_chn0();
+////     TstE00_2_F00_1();
+////          	
+////     choose_chn1();
+////    TstE00_2_F00_1();
+////        
+////     choose_chn2();
+////    TstE00_2_F00_1();
+////         
+////     choose_chn3();
+////     TstE00_2_F00_1();
+////     
+////     choose_chn4();
+////     TstE00_2_F00_1();
+////     
+////     choose_chn5();
+////     TstE00_2_F00_1();
+////          
+////     choose_chn6();
+////     TstE00_2_F00_1();
+////               
+////       choose_chn7();
+////       _nop_();
+////     TstE00_2_F00_1();
+////          
+////     choose_chn8();
+////     TstE00_2_F00_1();
+////          
+////     choose_chn9();
+////     TstE00_2_F00_1();
+////        
+////      choose_chn10();
+////     TstE00_2_F00_1();
+////          
+////     choose_chn11();
+////    TstE00_2_F00_1();
+////          
+////     choose_chn12();
+////    TstE00_2_F00_1();
+////          
+////     choose_chn13();
+////     TstE00_2_F00_1();
+////          
+////     choose_chn14();
+////     TstE00_2_F00_1();
+//          
+//     choose_chn15();
+//     TstE00_2_F00_1();
+//     
+//	if(Flag_Short)
+//		{Junc_Short = 1;
+//			Num_Short = 1;} 
+//	}
+//}
+////-----------------------------------------------------------------------------
+//void TstF17()
+//{
+//	if(!(Flag_Short))
+//		{
+//	SM_Send(CHIP_F,PCA9555A_OutPutPort0,0xff7f);   //写0
+//     delaynms(10);
+//     
+////     choose_chn0();
+////    TstE00_2_F00_1();
+////          	
+////     choose_chn1();
+////    TstE00_2_F00_1();
+////        
+////     choose_chn2();
+////    TstE00_2_F00_1();
+////         
+////     choose_chn3();
+////    TstE00_2_F00_1();
+////     
+////     choose_chn4();
+////    TstE00_2_F00_1();
+////     
+////     choose_chn5();
+////     TstE00_2_F00_1();
+////          
+////     choose_chn6();
+////     TstE00_2_F00_1();
+////               
+////       choose_chn7();
+////       _nop_();
+////     TstE00_2_F00_1();
+////      
+////     choose_chn8();
+////     TstE00_2_F00_1();
+////          
+////     choose_chn9();
+////   TstE00_2_F00_1();
+////        
+////      choose_chn10();
+////     TstE00_2_F00_1();
+////          
+////     choose_chn11();
+////     TstE00_2_F00_1();
+////          
+////     choose_chn12();
+////     TstE00_2_F00_1();
+////          
+////     choose_chn13();
+////    TstE00_2_F00_1();
+////          
+////     choose_chn14();
+////     TstE00_2_F00_1();
+////          
+////     choose_chn15();
+////     TstE00_2_F00_1();
+//     
+//	if(Flag_Short)
+//		{Junc_Short = 1;
+//			Num_Short = 1;} 
+//	}
+//} 
+        
+//-----------------------------------------------------------------------------
+void TstA00_1()
+{   
+	if(!(Flag_Short))
+    	{ADC(0x00);
+     		TstShort(2.0,2.60);}	
+  if(!(Flag_Short)) 
+     {ADC(0x01);
+     	TstShort(2.0,2.60);} 
+  if(!(Flag_Short))
+     	{ADC(0x02);
+     	TstShort(2.0,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x03);
+     	TstShort(2.0,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x04);
+     	TstShort(2.0,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x05);
+     	TstShort(2.0,2.60);}
+    } 
+//-----------------------------------------------------------------------------
+void TstA00_2_B00_1()
+{   
+	if(!(Flag_Short))
+    {ADC(0x01);
+     TstShort(2.0,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x02);
+     		TstShort(2.0,2.60);}
+  if(!(Flag_Short))
+   	{ADC(0x03);
+     TstShort(2.0,2.60); }
+  if(!(Flag_Short))
+     	{ADC(0x04);
+     	TstShort(2.0,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x05);
+     	TstShort(2.0,2.60);}
+    }
+//-----------------------------------------------------------------------------
+void TstB00_2_C00_1()
+{   
+	if(!(Flag_Short))
+     	{ADC(0x02); 
+     		TstShort(2.0,2.60);}
+  if(!(Flag_Short))
+      {ADC(0x03);
+    TstShort(2.0,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x04);
+     	TstShort(2.0,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x05);
+     	TstShort(2.0,2.60);}
+    }
+//-----------------------------------------------------------------------------
+void TstC00_2_D00_1()
+{   
+	if(!(Flag_Short))
+    	{ADC(0x03);
+       TstShort(2.0,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x04);
+     	TstShort(2.0,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x05);
+     	TstShort(2.0,2.60);}
+ }
+//-----------------------------------------------------------------------------
+void TstD00_2_E00_1()
+{   
+	if(!(Flag_Short))
+     	{ADC(0x04);
+     	TstShort(2.0,2.60);}
+  if(!(Flag_Short))
+     	{ADC(0x05);
+     	TstShort(2.0,2.60);}
+ }
+//-----------------------------------------------------------------------------
+void TstE00_2_F00_1()
+{   
+	if(!(Flag_Short))
+     	{ADC(0x05);
+     	TstShort(2.0,2.60);} 
+ } 
+//-----------------------------------------------------------------------------
+

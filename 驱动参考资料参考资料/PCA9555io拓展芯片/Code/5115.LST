@@ -1,0 +1,1613 @@
+C51 COMPILER V7.50   5115                                                                  10/18/2017 14:40:06 PAGE 1   
+
+
+C51 COMPILER V7.50, COMPILATION OF MODULE 5115
+OBJECT MODULE PLACED IN 5115.OBJ
+COMPILER INVOKED BY: C:\Keil\C51\BIN\C51.EXE 5115.C BROWSE DEBUG OBJECTEXTEND
+
+line level    source
+
+   1          //-----------------------------------------------------------------------------
+   2          //PROJECT CODE : 5115测试
+   3          //CREATE DATE  : 2010.12.29
+   4          //CREATED BY   : GaoWei
+   5          //FUNCTION     : 机械老化检测
+   6          //部分说明     :
+   7          
+   8          //-------------------------------- ---------------------------------------------  
+   9          #include <c8051f000.h>                   
+  10          #include"intrins.h"  
+  11          #include <stdio.h> 
+  12          
+  13          //定义PCA9555A内部八个寄存器地址
+  14          #define PCA9555A_InPutPort0             0x00     //输入端口0  
+  15          #define PCA9555A_InPutPort1             0x01     //输入端口1
+  16          #define PCA9555A_OutPutPort0      0x02     //输出端口0
+  17          #define PCA9555A_OutPutPort1      0x03     //输出端口1
+  18          #define PCA9555A_Inversionport0   0x04           //极性反转端口0
+  19          #define PCA9555A_Inversionport1   0x05           //极性反转端口1
+  20          #define PCA9555A_Configport0                    0x06             //配制端口0
+  21          #define PCA9555A_Configport1                    0x07             //配制端口1
+  22          
+  23          //#define  SYSCLK         4000000L       // System clock frequency in Hz
+  24          
+  25          //#define  SMB_FREQUENCY  10000L         // Target SCL clock rate
+  26                                                 // This example supports between 10kHz
+  27                                                 // and 100kHz
+  28          
+  29          #define  WRITE       0x00                 // WRITE direction bit
+  30          #define  READ        0x01                 // READ direction bit
+  31          
+  32          #define  CHIP_A   0x40                 // Device address for chip A PCA9555DeviceAddress=0x40
+  33          #define  CHIP_B   0x42                 // Device address for chip B PCA9555DeviceAddress=0x41
+  34          #define  CHIP_C   0x44                 // Device address for chip C PCA9555DeviceAddress=0x42
+  35          #define  CHIP_D   0x46                 // Device address for chip D PCA9555DeviceAddress=0x43
+  36          #define  CHIP_E   0x48                 // Device address for chip E PCA9555DeviceAddress=0x44
+  37          #define  CHIP_F   0x4A                 // Device address for chip F PCA9555DeviceAddress=0x45
+  38          #define  CHIP_G   0x4C                 // Device address for chip G PCA9555DeviceAddress=0x46
+  39          #define  CHIP_H   0x4E                 // Device address for chip H PCA9555DeviceAddress=0x47
+  40          
+  41          #define  SMB_BUS_ERROR  0x00        // (all modes) BUS ERROR
+  42          #define  SMB_START      0x08        // (MT & MR) START transmitted 起始条件已发出
+  43          #define  SMB_RP_START   0x10        // (MT & MR) repeated START重复起始条件已发出
+  44          #define  SMB_MTADDACK   0x18        // (MT) Slave address + W transmitted;从地址+W已发出，且收到ACK
+  45                                              //  ACK received
+  46          #define  SMB_MTADDNACK  0x20        // (MT) Slave address + W transmitted;从地址+W已发出，且收到NACK
+  47                                              //  NACK received
+  48          #define  SMB_MTDBACK    0x28        // (MT) data byte transmitted; ACK rec'vd 数据字节已发出，收到ACK
+  49          #define  SMB_MTDBNACK   0x30        // (MT) data byte transmitted; NACK rec'vd数据字节已发出，收到NACK
+  50          #define  SMB_MTARBLOST  0x38        // (MT) arbitration lost 竞争失败，保存当前数据
+  51          #define  SMB_MRADDACK   0x40        // (MR) Slave address + R transmitted;从地址+R已发出，且收到ACK
+  52                                              //  ACK received
+  53          #define  SMB_MRADDNACK  0x48        // (MR) Slave address + R transmitted;从地址+R已发出，且收到ACK
+  54                                              //  NACK received
+  55          #define  SMB_MRDBACK    0x50        // (MR) data byte rec'vd; ACK transmitted数据字节收到，ACK已发出
+C51 COMPILER V7.50   5115                                                                  10/18/2017 14:40:06 PAGE 2   
+
+  56          #define  SMB_MRDBNACK   0x58        // (MR) data byte rec'vd; NACK transmitted数据字节收到，ACK已发出
+  57          unsigned char COMMAND;                       // Holds the slave address + R/W bit for
+  58          unsigned char WORDR;                          // Holds data to be transmitted by the SMBus,OR data that ha
+             -s just been received.
+  59          unsigned char BYTE_NUMBER;          // Used by ISR to check what data has just been, sent - High address b
+             -yte, Low byte, or data byte
+  60          unsigned char RegAdd;
+  61          unsigned char HIGH_DAT,LOW_DAT;    // High & Low byte for EEPROM memory address
+  62          
+  63          //----------------------------------------------------------------------------- 
+  64          sfr16 TMR3RL   = 0x92;                 // Timer3 reload value
+  65          sfr16 TMR3     = 0x94;                 // Timer3 counter
+  66          sfr16 ADC0     = 0xbe;                 // ADC0 data
+  67          sfr16 ADC0GT   = 0xc4;                 // ADC0 greater than window
+  68          sfr16 ADC0LT   = 0xc6;                 // ADC0 less than window 
+  69          //-----------------------------------------------------------------------------
+  70          bit SM_BUSY;
+  71          sbit Start = P3^3;
+  72          sbit Led = P3^2;
+  73          sbit Buzz = P3^1;
+  74          
+  75          sbit Mos = P1^6;
+  76          sbit Led_red = P1^7;
+  77          sbit Led_yellow = P3^4;
+  78          sbit Led_green = P3^5;
+  79          
+  80           
+  81          
+  82          
+  83          unsigned char Flag_Short;             //短路标志位
+  84          unsigned char Junc_Short,Num_Short;  
+  85          unsigned char Channel_Select;   //AD通道
+  86          float data adtemp,aaa,xtemp=0;                       //ad临时采样值
+  87          unsigned int i=0,u=0; 
+  88          unsigned int xdata flag_a0_pass,flag_a1_pass,flag_b0_pass,flag_b1_pass,flag_c0_pass,flag_c1_pass,flag_d0_p
+             -ass,flag_d1_pass,flag_e0_pass,flag_e1_pass,flag_f0_pass,flag_f1_pass,flag_g0_pass,flag_g1_pass;
+  89          unsigned char xdata flag_a0_1,flag_a0_2,flag_a0_3,flag_a0_4,flag_a0_5,flag_a0_6,flag_a0_7,flag_a0_8;
+  90          unsigned char xdata flag_a1_1,flag_a1_2,flag_a1_3,flag_a1_4,flag_a1_5,flag_a1_6,flag_a1_7,flag_a1_8;
+  91          unsigned char xdata flag_b0_1,flag_b0_2,flag_b0_3,flag_b0_4,flag_b0_5,flag_b0_6,flag_b0_7,flag_b0_8;
+  92          unsigned char xdata flag_b1_1,flag_b1_2,flag_b1_3,flag_b1_4,flag_b1_5,flag_b1_6,flag_b1_7,flag_b1_8;
+  93          unsigned char xdata flag_c0_1,flag_c0_2,flag_c0_3,flag_c0_4,flag_c0_5,flag_c0_6,flag_c0_7,flag_c0_8;
+  94          unsigned char xdata flag_c1_1,flag_c1_2,flag_c1_3,flag_c1_4,flag_c1_5,flag_c1_6,flag_c1_7,flag_c1_8;
+  95          unsigned char xdata flag_d0_1,flag_d0_2,flag_d0_3,flag_d0_4,flag_d0_5,flag_d0_6,flag_d0_7,flag_d0_8;
+  96          unsigned char xdata flag_d1_1,flag_d1_2,flag_d1_3,flag_d1_4,flag_d1_5,flag_d1_6,flag_d1_7,flag_d1_8;
+  97          unsigned char xdata flag_e0_1,flag_e0_2,flag_e0_3,flag_e0_4,flag_e0_5,flag_e0_6,flag_e0_7,flag_e0_8;
+  98          unsigned char xdata flag_e1_1,flag_e1_2,flag_e1_3,flag_e1_4,flag_e1_5,flag_e1_6,flag_e1_7,flag_e1_8;
+  99          unsigned char xdata flag_f0_1,flag_f0_2,flag_f0_3,flag_f0_4,flag_f0_5,flag_f0_6,flag_f0_7,flag_f0_8;
+ 100          unsigned char xdata flag_f1_1,flag_f1_2,flag_f1_3,flag_f1_4,flag_f1_5,flag_f1_6,flag_f1_7,flag_f1_8;
+ 101          unsigned char xdata flag_g0_1,flag_g0_2,flag_g0_3,flag_g0_4;
+ 102          unsigned int xdata out_a,out_b,out_c,out_d,out_e,out_f,out_g;
+ 103          
+ 104          
+ 105          
+ 106          //-----------------------------------------------------------------------------
+ 107          void delay1s(unsigned char U);
+ 108          void delaynms (unsigned int uu);
+ 109          void delayn_ms (unsigned int uu);
+ 110          void delay(unsigned char us);
+ 111          void SYSCLK_Init(void);
+ 112          void init_port (void);
+ 113          void init_int(void);
+ 114          void init_smbus();
+C51 COMPILER V7.50   5115                                                                  10/18/2017 14:40:06 PAGE 3   
+
+ 115          //void init_adc();
+ 116          void rst_smbus();
+ 117          void SM_Send (unsigned char chip_select, unsigned char byte_address, unsigned int out_byte);
+ 118          char SM_Receive (unsigned char chip_select, unsigned char byte_address);
+ 119          void SMBus_ISR (void);
+ 120          void Buzz100ms(unsigned char u);   //蜂鸣器短
+ 121          void Buzz1s(unsigned char uuu);    //蜂鸣器长
+ 122          void ADC (unsigned char Channel);
+ 123          void Clear();
+ 124          void dac0_12();
+ 125          void Dac0Rst();
+ 126          void DacInit();
+ 127          void RefInit();
+ 128          void tst();
+ 129          void init_smbus_read();
+ 130          void output_final();
+ 131          //void Timer3_Init ();
+ 132          
+ 133          
+ 134          //-----------------------------------------------------------------------------
+ 135          main()  
+ 136          {   
+ 137   1              float uu=1;
+ 138   1          
+ 139   1        WDTCN = 0xde;
+ 140   1        WDTCN = 0xad;
+ 141   1        SYSCLK_Init();              //初始化时钟
+ 142   1        init_int();
+ 143   1        //Timer3_Init (); 
+ 144   1        init_port (); 
+ 145   1        init_smbus();
+ 146   1        RefInit();
+ 147   1        DacInit();
+ 148   1      
+ 149   1      
+ 150   1      
+ 151   1        //init_adc();
+ 152   1        delaynms(10); 
+ 153   1       
+ 154   1        
+ 155   1         
+ 156   1       
+ 157   1         
+ 158   1        
+ 159   1      while(1)
+ 160   1        {  
+ 161   2              if(!(Start))
+ 162   2              {
+ 163   3               Clear();
+ 164   3               Led_yellow = 0;
+ 165   3               dac0_12();
+ 166   3               init_smbus_read();
+ 167   3               delaynms(300);
+ 168   3               
+ 169   3               
+ 170   3               for(i=0;i<500;i++)
+ 171   3               {
+ 172   4                      Mos = 0;
+ 173   4                      delaynms(73);
+ 174   4                      tst();
+ 175   4                      Mos = 1;
+ 176   4                      delaynms(73);
+C51 COMPILER V7.50   5115                                                                  10/18/2017 14:40:06 PAGE 4   
+
+ 177   4                      }
+ 178   3                      
+ 179   3               Led_yellow = 1;
+ 180   3        delaynms(300);
+ 181   3               output_final();
+ 182   3               if((flag_a0_pass==0)&&(flag_a1_pass==0)&&(flag_b0_pass==0)&&(flag_b1_pass==0)&&(flag_c0_pass==0)&&(fla
+             -g_c1_pass==0)&&(flag_d0_pass==0)&&(flag_d1_pass==0)&&(flag_e0_pass==0)&&(flag_e1_pass==0)&&(flag_f0_pass==0)&&(flag_f1_p
+             -ass==0)&&(flag_g0_pass==0))
+ 183   3                {
+ 184   4                      Led_green = 0;
+ 185   4                      Buzz100ms(3);
+ 186   4                 
+ 187   4                  }
+ 188   3                 else
+ 189   3                      {
+ 190   4                              Led_red = 0;
+ 191   4                              Buzz1s(2);
+ 192   4                              }
+ 193   3              
+ 194   3               //delaynms(300);
+ 195   3       
+ 196   3      }               
+ 197   2      } 
+ 198   1      }
+ 199          
+ 200          //-----------------------------------------------------------------------------
+ 201          void delay(unsigned char us)
+ 202          {
+ 203   1              while (us)
+ 204   1              {  _nop_();
+ 205   2                        --us;
+ 206   2              }
+ 207   1      }
+ 208          //-----------------------------------------------------------------------------
+ 209          void SYSCLK_Init(void)
+ 210          {  int i;                              // delay counter
+ 211   1               OSCXCN = 0x67;                      // start external oscillator with
+ 212   1                                             // 4MHz crystal
+ 213   1         for (i=0; i < 256; i++) ;           // Wait for osc. to start up
+ 214   1         while (!(OSCXCN & 0x80)) ;  
+ 215   1         OSCICN = 0x88;                      // select external oscillator as SYSCLK
+ 216   1                                             // source and enable missing clock
+ 217   1                                             // detector
+ 218   1                                             //       OSCICN = 0x07;   //interal 16MHZ
+ 219   1                                  
+ 220   1      }
+ 221          //------------------------------------------------------------------------------
+ 222          void init_port (void) 
+ 223          {   XBR0  = 0x01;     //使能SMBUS
+ 224   1                XBR2  = 0x40;
+ 225   1               
+ 226   1                PRT0CF = 0Xff;  
+ 227   1                PRT1CF = 0Xff;
+ 228   1                PRT2CF = 0Xff;
+ 229   1                PRT3CF = 0X00; 
+ 230   1              }
+ 231          //------------------------------------------------------------------------------------------
+ 232          void init_smbus()    //SDA=P0.0  SCL=P0.1
+ 233          {
+ 234   1          SMB0CN    = 0x40;                         //允许ＳＭｂｕｓ
+ 235   1          SMB0CR    = 0x99;                                             //系统时钟为100KHZ
+ 236   1      }
+C51 COMPILER V7.50   5115                                                                  10/18/2017 14:40:06 PAGE 5   
+
+ 237          
+ 238          //------------------------------------------------------------------------------------------
+ 239          void rst_smbus()
+ 240          {
+ 241   1          SMB0CN    = 0x00;                         //禁止ＳＭｂｕｓ 
+ 242   1          SMB0CN    = 0x40;                         //允许ＳＭｂｕｓ
+ 243   1          SMB0CR    = 0x99;                                             //系统时钟为100KHZ
+ 244   1      
+ 245   1      }
+ 246          
+ 247          //-----------------------------------------------------------------------------
+ 248          void init_int(void)
+ 249          {   IE        = 0x80; 
+ 250   1          EIE1      = 0x02;
+ 251   1          //EIE2 |= 0x01;                       // Timer3 interrupt enable
+ 252   1           EIP2      = 0x02;    //AD优先 
+ 253   1          EA = 1; 
+ 254   1      }
+ 255          //-----------------------------------------------------------------------------
+ 256          // SMBus random read function------------------------------------------------------
+ 257          // Reads 1 byte from the specified memory location.
+ 258          //
+ 259          // byte_address = memory address of byte to read
+ 260          // chip_select = device address of EEPROM to be read from
+ 261          char SM_Receive (unsigned char chip_select, unsigned char byte_address)
+ 262          {
+ 263   1         while (SM_BUSY);                          // Wait for bus to be free.
+ 264   1         SM_BUSY = 1;                              // Occupy SMBus (set to busy)
+ 265   1          //SFRPAGE   = SMB0_PAGE;
+ 266   1         SMB0CN = 0x44;                            // SMBus enabled, ACK on acknowledge cycle
+ 267   1      
+ 268   1         BYTE_NUMBER = 2;                          // 2 address bytes
+ 269   1         COMMAND = (chip_select | READ);           // Chip select + READ
+ 270   1         RegAdd = byte_address;
+ 271   1         
+ 272   1         
+ 273   1         STO = 0;
+ 274   1         STA = 1;                                  // Start transfer
+ 275   1         
+ 276   1         while (SM_BUSY);          
+ 277   1         //return WORD;
+ 278   1      }
+*** WARNING C173 IN LINE 278 OF 5115.C: missing return-expression
+ 279          //------------------------------------------------------------------------------------------
+ 280          void SM_Send (unsigned char chip_select, unsigned char byte_address, unsigned int out_byte)
+ 281          //out_byte为16位，高8位写P0，低8位些P1
+ 282          {
+ 283   1          while (SM_BUSY);                          // Wait for SMBus to be free.
+ 284   1          SM_BUSY = 1;                              // Occupy SMBus (set to busy)
+ 285   1          //SFRPAGE   = SMB0_PAGE;
+ 286   1          SMB0CN = 0x44;                            // SMBus enabled,
+ 287   1                                                   // ACK on acknowledge cycle 
+ 288   1         RegAdd = byte_address;
+ 289   1         BYTE_NUMBER = 2;                          // 2 address bytes.
+ 290   1         COMMAND = (chip_select | WRITE);  
+ 291   1         HIGH_DAT = ((out_byte >> 8) & 0x00FF);// Upper 8 address bits
+ 292   1         LOW_DAT  = (out_byte & 0x00FF);        // Lower 8 address bits
+ 293   1         
+ 294   1         STO = 0;
+ 295   1         STA = 1;                                  // Start transfer
+ 296   1        
+ 297   1      }
+C51 COMPILER V7.50   5115                                                                  10/18/2017 14:40:06 PAGE 6   
+
+ 298          //------------------------------------------------------------------------------------
+ 299          // Interrupt Service Routine
+ 300          //------------------------------------------------------------------------------------
+ 301          void SMBUS_ISR (void) interrupt 7
+ 302          {
+ 303   1         switch (SMB0STA){                   // Status code for the SMBus (SMB0STA register)
+ 304   2      
+ 305   2            // Master Transmitter/Receiver: START condition transmitted.
+ 306   2            // The R/W bit of the COMMAND word sent after this state will
+ 307   2            // always be a zero (W) because for both read and write,
+ 308   2            // the memory address must be written first.
+ 309   2            case SMB_START:
+ 310   2                SMB0DAT = (COMMAND & 0xFE);   // Load address of the slave to be accessed.
+ 311   2                STA = 0;                      // Manually clear START bit
+ 312   2                break;
+ 313   2      
+ 314   2            // Master Transmitter/Receiver: Repeated START condition transmitted.
+ 315   2            // This state should only occur during a read, after the memory address has been
+ 316   2            // sent and acknowledged.
+ 317   2            case SMB_RP_START:
+ 318   2               SMB0DAT = COMMAND;            // COMMAND should hold slave address + R.
+ 319   2               STA = 0;
+ 320   2               break;
+ 321   2      
+ 322   2            // Master Transmitter: Slave address + WRITE transmitted.  ACK received.
+ 323   2            case SMB_MTADDACK:
+ 324   2                 SMB0DAT = RegAdd;    
+ 325   2                 //SMB0DAT = HIGH_ADD;           // Load high byte of memory address
+ 326   2                 break;                                // to be written.
+ 327   2                
+ 328   2            // Master Transmitter: Slave address + WRITE transmitted.  NACK received.
+ 329   2            // The slave is not responding.  Send a STOP followed by a START to try again.
+ 330   2            case SMB_MTADDNACK:
+ 331   2                STO = 1;
+ 332   2                STA = 1;
+ 333   2                break;
+ 334   2      
+ 335   2            // Master Transmitter: Data byte transmitted.  ACK received.
+ 336   2            // This state is used in both READ and WRITE operations.  Check BYTE_NUMBER
+ 337   2            // for memory address status - if only HIGH_ADD has been sent, load LOW_ADD.
+ 338   2            // If LOW_ADD has been sent, check COMMAND for R/W value to determine 
+ 339   2            // next state.
+ 340   2            case SMB_MTDBACK:
+ 341   2               if((COMMAND & 0x01)==1)
+ 342   2                  {                     // If R/W=READ, sent repeated START.
+ 343   3                   //STO = 0;
+ 344   3                   STA = 1;
+ 345   3                   } 
+ 346   2                       else
+ 347   2                         {
+ 348   3                          switch (BYTE_NUMBER)
+ 349   3                       {
+ 350   4                              case 2:                    // If BYTE_NUMBER=2, only HIGH_ADD
+ 351   4                           SMB0DAT = HIGH_DAT;      // has been sent.
+ 352   4                           BYTE_NUMBER--;          // Decrement for next time around.
+ 353   4                           STA = 0;
+ 354   4                           break;
+ 355   4                        case 1:                    // If BYTE_NUMBER=1, LOW_ADD was just sent.
+ 356   4                           SMB0DAT = LOW_DAT;      // If R/W=WRITE, load byte to write.
+ 357   4                           BYTE_NUMBER--;
+ 358   4                           STA = 0;
+ 359   4                           break;
+C51 COMPILER V7.50   5115                                                                  10/18/2017 14:40:06 PAGE 7   
+
+ 360   4                        default:                   // If BYTE_NUMBER=0, transfer is finished.
+ 361   4                           STO = 1;
+ 362   4                           STA = 0;
+ 363   4                           SM_BUSY = 0;            // Free SMBus
+ 364   4                        }
+ 365   3                          }
+ 366   2      //         {
+ 367   2      //            case 2:                    // If BYTE_NUMBER=2, only HIGH_ADD
+ 368   2      //               if((RegAdd==0)||(RegAdd==2)||(RegAdd==4)||(RegAdd==6))
+ 369   2      //                      {
+ 370   2      //                      //WORDT = WORDT>>8;
+ 371   2      //                      SMB0DAT = (char)(WORD>>8);      // has been sent.
+ 372   2      //                      }else
+ 373   2      ////                     if((RegAdd==1)||(RegAdd==3)||(RegAdd==5)||(RegAdd==7))
+ 374   2      ////                            {WORDT = WORD&0xFF;}
+ 375   2      ////                     WORD = (char)WORDT;
+ 376   2      //               SMB0DAT = (char)WORD;      // has been sent.
+ 377   2      //               BYTE_NUMBER--;          // Decrement for next time around.
+ 378   2      //               break;
+ 379   2      //            case 1:                    // If BYTE_NUMBER=1, LOW_ADD was just sent.
+ 380   2      //               if (COMMAND & 0x01){    // If R/W=READ, sent repeated START.
+ 381   2      //                 //SFRPAGE   = SMB0_PAGE;
+ 382   2      //                              STO = 0;
+ 383   2      //                  STA = 1;
+ 384   2      //               } 
+ 385   2      //               else { 
+ 386   2      //                  if((RegAdd==0)||(RegAdd==2)||(RegAdd==4)||(RegAdd==6))
+ 387   2      ////                            {WORDT = WORD&0xFF;}
+ 388   2      //               if((RegAdd==0)||(RegAdd==2)||(RegAdd==4)||(RegAdd==6))
+ 389   2      //                      {
+ 390   2      //                      //WORDT = WORDT>>8;
+ 391   2      //                       SMB0DAT = (char)(WORD);      // If R/W=WRITE, load byte to write.
+ 392   2      //                      }else
+ 393   2      ////                            WORDT = (char)WORDT; 
+ 394   2      //                    SMB0DAT = (char)(WORD>>8);      // If R/W=WRITE, load byte to write.
+ 395   2      //                  BYTE_NUMBER--;
+ 396   2      //               }
+ 397   2      //         
+ 398   2      //               break; 
+ 399   2      //            case 0:                   // If BYTE_NUMBER=0, transfer is finished.
+ 400   2      //             STO = 1;
+ 401   2      //               SM_BUSY = 0;            // Free SMBus
+ 402   2      //            }
+ 403   2               break;
+ 404   2      
+ 405   2            // Master Transmitter: Data byte transmitted.  NACK received.
+ 406   2            // Slave not responding.  Send STOP followed by START to try again.
+ 407   2            case SMB_MTDBNACK:
+ 408   2                STO = 1;
+ 409   2                STA = 1;
+ 410   2                break;
+ 411   2      
+ 412   2            // Master Transmitter: Arbitration lost.
+ 413   2            // Should not occur.  If so, restart transfer.
+ 414   2            case SMB_MTARBLOST:
+ 415   2              STO = 1;
+ 416   2              STA = 1;
+ 417   2              break;
+ 418   2      
+ 419   2            // Master Receiver: Slave address + READ transmitted.  ACK received.
+ 420   2            // Set to transmit NACK after next transfer since it will be the last (only)
+ 421   2            // byte.
+C51 COMPILER V7.50   5115                                                                  10/18/2017 14:40:06 PAGE 8   
+
+ 422   2            case SMB_MRADDACK:
+ 423   2              AA = 0;                       // NACK sent on acknowledge cycle.
+ 424   2              break;
+ 425   2       
+ 426   2            // Master Receiver: Slave address + READ transmitted.  NACK received.
+ 427   2            // Slave not responding.  Send repeated start to try again.
+ 428   2            case SMB_MRADDNACK:
+ 429   2               //STO = 0;
+ 430   2               STA = 1;
+ 431   2               break;
+ 432   2      
+ 433   2            // Data byte received.  ACK transmitted.
+ 434   2            // State should not occur because AA is set to zero in previous state.
+ 435   2            // Send STOP if state does occur.
+ 436   2            case SMB_MRDBACK:
+ 437   2               WORDR = SMB0DAT;
+ 438   2                           STO = 1;
+ 439   2               SM_BUSY = 0;
+ 440   2               break;
+ 441   2      
+ 442   2            // Data byte received.  NACK transmitted.
+ 443   2            // Read operation has completed.  Read data register and send STOP.
+ 444   2            case SMB_MRDBNACK:
+ 445   2                WORDR = SMB0DAT;
+ 446   2                STO = 1;
+ 447   2                SM_BUSY = 0;                  // Free SMBus
+ 448   2               break;
+ 449   2      
+ 450   2            // All other status codes meaningless in this application. Reset communication.
+ 451   2      //      default:
+ 452   2      //       //SFRPAGE   = SMB0_PAGE;
+ 453   2      //           STO = 1;                      // Reset communication.
+ 454   2      //       SM_BUSY = 0;
+ 455   2      //       break;
+ 456   2            }
+ 457   1      
+ 458   1         SI=0;                               // clear interrupt flag
+ 459   1      }
+ 460          //------------------------------------------------------------------------------
+ 461          void delay1s(unsigned char U)
+ 462          { while (U)
+ 463   1              {delaynms(200);
+ 464   2                      delaynms(200);
+ 465   2                      delaynms(200);
+ 466   2                      delaynms(200);
+ 467   2              delaynms(200);
+ 468   2                      U--;} }
+ 469          //------------------------------------------------------------------------------
+ 470          void delaynms (unsigned int uu)
+ 471          {  unsigned int oo,ll;
+ 472   1         for (oo=0;oo<uu;oo++)
+ 473   1         {for(ll=0;ll<1140;ll++);}}
+ 474          //------------------------------------------------------------------------------
+ 475          void delayn_ms (unsigned int uu)
+ 476          {  unsigned int oo,ll;
+ 477   1         for (oo=0;oo<uu;oo++) 
+ 478   1         {for(ll=0;ll<10;ll++);}}
+ 479          //------------------------------------------------------------------------------
+ 480          //buzzer 100ms per time
+ 481          //------------------------------------------------------------------------------
+ 482          void Buzz100ms(unsigned char u)
+ 483          { unsigned char i;
+C51 COMPILER V7.50   5115                                                                  10/18/2017 14:40:06 PAGE 9   
+
+ 484   1              for(i=0;i<u;i++)
+ 485   1              {       Buzz = 0;
+ 486   2                      delaynms(100);
+ 487   2                      Buzz = 1;
+ 488   2                      delaynms(100);}}
+ 489          //------------------------------------------------------------------------------
+ 490          //buzzer 1s per time
+ 491          //------------------------------------------------------------------------------
+ 492          void Buzz1s(unsigned char uuu)
+ 493          {
+ 494   1              unsigned char i;
+ 495   1              for(i=0;i<uuu;i++)
+ 496   1              {       
+ 497   2                      Buzz = 0;
+ 498   2                      delay1s(1);
+ 499   2                      Buzz = 1;
+ 500   2                      delay1s(1);
+ 501   2              }
+ 502   1      }
+ 503          //------------------------------------------------------------------------------
+ 504          ////-----------------------------------------------------------------------------
+ 505          void dac0_12()
+ 506          {   //DAC0L = 0x00;
+ 507   1          //DAC0H = 0x00;
+ 508   1          DAC0L = 0x55;
+ 509   1          DAC0H = 0x02; 
+ 510   1        }
+ 511          //-----------------------------------------------------------------------------
+ 512          void Dac0Rst()
+ 513          {
+ 514   1          DAC0L = 0x00;                   // DAC0 Low Byte Register    0xa00=1.5v
+ 515   1          DAC0H = 0x00;                   // DAC0 High Byte Register   0xd55=2.0v 
+ 516   1      }
+ 517          
+ 518          //-----------------------------------------------------------------------------
+ 519          // DAC Configuration
+ 520          //-----------------------------------------------------------------------------
+ 521          void DacInit()
+ 522          {   DAC0CN = 0x80;                    // DAC0 Control Register
+ 523   1          DAC1CN = 0x80;                    // DAC1 Control Register
+ 524   1           DAC0L = 0x00;                    // DAC0 Low Byte Register    0xa00=1.5v
+ 525   1           DAC0H = 0x00;                    // DAC0 High Byte Register   0xd55=2.0v
+ 526   1           //DA1硬件放大倍数=21
+ 527   1           DAC1L = 0x00;                    // DAC1 Low Byte Register
+ 528   1           DAC1H = 0x00;                    // DAC1 High Byte Register
+ 529   1      }
+ 530          //-----------------------------------------------------------------------------
+ 531          void RefInit()
+ 532          {REF0CN = 0x03;                     // Reference Control Register
+ 533   1      }
+ 534          //-----------------------------------------------------------------------------
+ 535          void init_smbus_read()
+ 536          {
+ 537   1              SM_Send(CHIP_A,PCA9555A_Configport0,0x0000);   //A输出 
+ 538   1              delaynms(10);
+ 539   1                SM_Send(CHIP_B,PCA9555A_Configport0,0x0000);   //A输出 
+ 540   1              delaynms(10);
+ 541   1              SM_Send(CHIP_C,PCA9555A_Configport0,0x0000);   //A输出 
+ 542   1              delaynms(10);
+ 543   1              SM_Send(CHIP_D,PCA9555A_Configport0,0x0000);   //A输出 
+ 544   1              delaynms(10);
+ 545   1              SM_Send(CHIP_E,PCA9555A_Configport0,0x0000);   //A输出 
+C51 COMPILER V7.50   5115                                                                  10/18/2017 14:40:06 PAGE 10  
+
+ 546   1              delaynms(10);
+ 547   1              SM_Send(CHIP_F,PCA9555A_Configport0,0x0000);   //A输出 
+ 548   1              delaynms(10);
+ 549   1              SM_Send(CHIP_G,PCA9555A_Configport0,0x0000);   //A输出 
+ 550   1              delaynms(10);
+ 551   1              SM_Send(CHIP_H,PCA9555A_Configport0,0x0000);   //A输出 
+ 552   1              delaynms(10);
+ 553   1                
+ 554   1                SM_Send(CHIP_A,PCA9555A_OutPutPort0,0x0000);   //写1恢复A片全1
+ 555   1          delaynms(5);
+ 556   1          SM_Send(CHIP_B,PCA9555A_OutPutPort0,0x0000);   //写1恢复A片全1
+ 557   1          delaynms(5);
+ 558   1          SM_Send(CHIP_C,PCA9555A_OutPutPort0,0x0000);   //写1恢复A片全1
+ 559   1          delaynms(5);
+ 560   1              SM_Send(CHIP_D,PCA9555A_OutPutPort0,0x0000);   //写1恢复A片全1
+ 561   1          delaynms(5);
+ 562   1          SM_Send(CHIP_E,PCA9555A_OutPutPort0,0x0000);   //写1恢复A片全1
+ 563   1          delaynms(5);
+ 564   1          SM_Send(CHIP_F,PCA9555A_OutPutPort0,0x0000);   //写1恢复A片全1
+ 565   1          delaynms(5);
+ 566   1          SM_Send(CHIP_G,PCA9555A_OutPutPort0,0x0000);   //写1恢复A片全1
+ 567   1          delaynms(5);
+ 568   1          SM_Send(CHIP_H,PCA9555A_OutPutPort0,0x0000);   //写1恢复A片全1
+ 569   1          delaynms(5);
+ 570   1          
+ 571   1          SM_Send(CHIP_A,PCA9555A_OutPutPort0,0xffff);   //写1恢复A片全1
+ 572   1          delaynms(5);
+ 573   1          SM_Send(CHIP_B,PCA9555A_OutPutPort0,0xffff);   //写1恢复A片全1
+ 574   1          delaynms(5);
+ 575   1          SM_Send(CHIP_C,PCA9555A_OutPutPort0,0xffff);   //写1恢复A片全1
+ 576   1          delaynms(5);
+ 577   1              SM_Send(CHIP_D,PCA9555A_OutPutPort0,0xffff);   //写1恢复A片全1
+ 578   1          delaynms(5);
+ 579   1          SM_Send(CHIP_E,PCA9555A_OutPutPort0,0xffff);   //写1恢复A片全1
+ 580   1          delaynms(5);
+ 581   1          SM_Send(CHIP_F,PCA9555A_OutPutPort0,0xffff);   //写1恢复A片全1
+ 582   1          delaynms(5);
+ 583   1          SM_Send(CHIP_G,PCA9555A_OutPutPort0,0xffff);   //写1恢复A片全1
+ 584   1          delaynms(5);
+ 585   1          SM_Send(CHIP_H,PCA9555A_OutPutPort0,0xffff);   //写1恢复A片全1
+ 586   1          delaynms(5);
+ 587   1              
+ 588   1                SM_Send(CHIP_A,PCA9555A_Configport0,0xffff);   //A输入 
+ 589   1              delaynms(10);
+ 590   1              SM_Send(CHIP_B,PCA9555A_Configport0,0xffff);   //A输入 
+ 591   1              delaynms(10);
+ 592   1              SM_Send(CHIP_C,PCA9555A_Configport0,0xffff);   //A输入  
+ 593   1              delaynms(10);   
+ 594   1              SM_Send(CHIP_D,PCA9555A_Configport0,0xffff);   //A输入  
+ 595   1              delaynms(10);
+ 596   1              SM_Send(CHIP_E,PCA9555A_Configport0,0xffff);   //A输入  
+ 597   1              delaynms(10);
+ 598   1              SM_Send(CHIP_F,PCA9555A_Configport0,0xffff);   //A输入  
+ 599   1              delaynms(10);
+ 600   1              SM_Send(CHIP_G,PCA9555A_Configport0,0xffff);   //A输入  
+ 601   1              delaynms(10);
+ 602   1              SM_Send(CHIP_H,PCA9555A_Configport0,0xffff);   //A输入  
+ 603   1              delaynms(10);
+ 604   1              }
+ 605          //-----------------------------------------------------------------------------
+ 606          void tst()
+ 607          {
+C51 COMPILER V7.50   5115                                                                  10/18/2017 14:40:06 PAGE 11  
+
+ 608   1                 SM_Receive (CHIP_A, PCA9555A_InPutPort0);
+ 609   1           WORDR = WORDR;
+ 610   1           if(!(WORDR==0x00))
+ 611   1              {
+ 612   2                      flag_a0_pass++;
+ 613   2              }
+ 614   1           if(WORDR&0X01)
+ 615   1              {
+ 616   2                      flag_a0_1 = 1;
+ 617   2                      out_a = out_a|0x0100;
+ 618   2                }
+ 619   1              
+ 620   1           if(WORDR&0X02)
+ 621   1              {
+ 622   2                      flag_a0_2 = 1;
+ 623   2                      out_a = out_a|0x0200;
+ 624   2                } 
+ 625   1                
+ 626   1           if(WORDR&0X04)
+ 627   1              {
+ 628   2                      flag_a0_3 = 1;
+ 629   2                      out_a = out_a|0x0400;
+ 630   2                }
+ 631   1                
+ 632   1           if(WORDR&0X08)
+ 633   1              {
+ 634   2                      flag_a0_4 = 1;
+ 635   2                      out_a = out_a|0x0800;
+ 636   2                }
+ 637   1                
+ 638   1           if(WORDR&0X10)
+ 639   1              {
+ 640   2                      flag_a0_5 = 1;
+ 641   2                      out_a = out_a|0x1000;
+ 642   2                }
+ 643   1                
+ 644   1           if(WORDR&0X20)
+ 645   1               {
+ 646   2                      flag_a0_6 = 1;
+ 647   2                      out_a = out_a|0x2000;
+ 648   2                }
+ 649   1                
+ 650   1           if(WORDR&0X40)
+ 651   1              {
+ 652   2                      flag_a0_7 = 1;
+ 653   2                      out_a = out_a|0x4000;
+ 654   2                }
+ 655   1                
+ 656   1           if(WORDR&0X80)
+ 657   1               {
+ 658   2                      flag_a0_8 = 1;
+ 659   2                      out_a = out_a|0x8000;
+ 660   2                }
+ 661   1           
+ 662   1                
+ 663   1           SM_Receive (CHIP_A, PCA9555A_InPutPort1);
+ 664   1           WORDR = WORDR;
+ 665   1           if(!(WORDR==0x00))
+ 666   1              {
+ 667   2                      flag_a1_pass++;
+ 668   2              }
+ 669   1           if(WORDR&0X01)
+C51 COMPILER V7.50   5115                                                                  10/18/2017 14:40:06 PAGE 12  
+
+ 670   1              {
+ 671   2                      flag_a1_1 = 1;
+ 672   2                      out_a = out_a|0x0001;
+ 673   2                }
+ 674   1              
+ 675   1           if(WORDR&0X02)
+ 676   1              {
+ 677   2                      flag_a1_2 = 1;
+ 678   2                      out_a = out_a|0x0002;
+ 679   2                }
+ 680   1                
+ 681   1           if(WORDR&0X04)
+ 682   1              {
+ 683   2                      flag_a1_3 = 1;
+ 684   2                      out_a = out_a|0x0004;
+ 685   2                }
+ 686   1                
+ 687   1           if(WORDR&0X08)
+ 688   1              {
+ 689   2                      flag_a1_4 = 1;
+ 690   2                      out_a = out_a|0x0008;
+ 691   2                }
+ 692   1                
+ 693   1           if(WORDR&0X10)
+ 694   1              {
+ 695   2                      flag_a1_5 = 1;
+ 696   2                      out_a = out_a|0x0010;
+ 697   2                }
+ 698   1                
+ 699   1           if(WORDR&0X20)
+ 700   1               {
+ 701   2                      flag_a1_6 = 1;
+ 702   2                      out_a = out_a|0x0020;
+ 703   2                }
+ 704   1                
+ 705   1           if(WORDR&0X40)
+ 706   1              {
+ 707   2                      flag_a1_7 = 1;
+ 708   2                      out_a = out_a|0x0040;
+ 709   2                }
+ 710   1                
+ 711   1           if(WORDR&0X80)
+ 712   1               {
+ 713   2                      flag_a1_8 = 1;
+ 714   2                      out_a = out_a|0x0080;
+ 715   2                }
+ 716   1           
+ 717   1           
+ 718   1           SM_Receive (CHIP_B, PCA9555A_InPutPort0);
+ 719   1           WORDR = WORDR;
+ 720   1           if(!(WORDR==0x00))
+ 721   1              {
+ 722   2                      flag_b0_pass++;
+ 723   2              }
+ 724   1           if(WORDR&0X01)
+ 725   1              {
+ 726   2                      flag_b0_1 = 1;
+ 727   2                      out_b = out_b|0x0100;
+ 728   2                }
+ 729   1              
+ 730   1           if(WORDR&0X02)
+ 731   1              {
+C51 COMPILER V7.50   5115                                                                  10/18/2017 14:40:06 PAGE 13  
+
+ 732   2                      flag_b0_2 = 1;
+ 733   2                      out_b = out_b|0x0200;
+ 734   2                }
+ 735   1                
+ 736   1           if(WORDR&0X04)
+ 737   1              {
+ 738   2                      flag_b0_3 = 1;
+ 739   2                      out_b = out_b|0x0400;
+ 740   2                }
+ 741   1                
+ 742   1           if(WORDR&0X08)
+ 743   1              {
+ 744   2                      flag_b0_4 = 1;
+ 745   2                      out_b = out_b|0x0800;
+ 746   2                }
+ 747   1                
+ 748   1           if(WORDR&0X10)
+ 749   1              {
+ 750   2                      flag_b0_5 = 1;
+ 751   2                      out_b = out_b|0x1000;
+ 752   2                }
+ 753   1                
+ 754   1           if(WORDR&0X20)
+ 755   1               {
+ 756   2                      flag_b0_6 = 1;
+ 757   2                      out_b = out_b|0x2000;
+ 758   2                }
+ 759   1                
+ 760   1           if(WORDR&0X40)
+ 761   1              {
+ 762   2                      flag_b0_7 = 1;
+ 763   2                      out_b = out_b|0x4000;
+ 764   2                }
+ 765   1                
+ 766   1           if(WORDR&0X80)
+ 767   1               {
+ 768   2                      flag_b0_8 = 1;
+ 769   2                      out_b = out_b|0x8000;
+ 770   2                }
+ 771   1           
+ 772   1                
+ 773   1           SM_Receive (CHIP_B, PCA9555A_InPutPort1);
+ 774   1           WORDR = WORDR;
+ 775   1           if(!(WORDR==0x00))
+ 776   1              {
+ 777   2                      flag_b1_pass++;
+ 778   2              }
+ 779   1           if(WORDR&0X01)
+ 780   1              {
+ 781   2                      flag_b1_1 = 1;
+ 782   2                      out_b = out_b|0x0001;
+ 783   2                }
+ 784   1              
+ 785   1           if(WORDR&0X02)
+ 786   1              {
+ 787   2                      flag_b1_2 = 1;
+ 788   2                      out_b = out_b|0x0002;
+ 789   2                }
+ 790   1                
+ 791   1           if(WORDR&0X04)
+ 792   1              {
+ 793   2                      flag_b1_3 = 1;
+C51 COMPILER V7.50   5115                                                                  10/18/2017 14:40:06 PAGE 14  
+
+ 794   2                      out_b = out_b|0x0004;
+ 795   2                }
+ 796   1                
+ 797   1           if(WORDR&0X08)
+ 798   1              {
+ 799   2                      flag_b1_4 = 1;
+ 800   2                      out_b = out_b|0x0008;
+ 801   2                }
+ 802   1                
+ 803   1           if(WORDR&0X10)
+ 804   1              {
+ 805   2                      flag_b1_5 = 1;
+ 806   2                      out_b = out_b|0x0010;
+ 807   2                }
+ 808   1                
+ 809   1           if(WORDR&0X20)
+ 810   1               {
+ 811   2                      flag_b1_6 = 1;
+ 812   2                      out_b = out_b|0x0020;
+ 813   2                }
+ 814   1                
+ 815   1           if(WORDR&0X40)
+ 816   1              {
+ 817   2                      flag_b1_7 = 1;
+ 818   2                      out_b = out_b|0x0040;
+ 819   2                }
+ 820   1                
+ 821   1           if(WORDR&0X80)
+ 822   1               {
+ 823   2                      flag_b1_8 = 1;
+ 824   2                      out_b = out_b|0x0080;
+ 825   2                }
+ 826   1              
+ 827   1           SM_Receive (CHIP_C, PCA9555A_InPutPort0);
+ 828   1           WORDR = WORDR;
+ 829   1           if(!(WORDR==0x00))
+ 830   1              {
+ 831   2                      flag_c0_pass++;
+ 832   2              }
+ 833   1           if(WORDR&0X01)
+ 834   1              {
+ 835   2                      flag_c0_1 = 1;
+ 836   2                      out_c = out_c|0x0100;
+ 837   2                }
+ 838   1              
+ 839   1           if(WORDR&0X02)
+ 840   1              {
+ 841   2                      flag_c0_2 = 1;
+ 842   2                      out_c = out_c|0x0200;
+ 843   2                }
+ 844   1                
+ 845   1           if(WORDR&0X04)
+ 846   1              {
+ 847   2                      flag_c0_3 = 1;
+ 848   2                      out_c = out_c|0x0400;
+ 849   2                }
+ 850   1                
+ 851   1           if(WORDR&0X08)
+ 852   1              {
+ 853   2                      flag_c0_4 = 1;
+ 854   2                      out_c = out_c|0x0800;
+ 855   2                }
+C51 COMPILER V7.50   5115                                                                  10/18/2017 14:40:06 PAGE 15  
+
+ 856   1                
+ 857   1           if(WORDR&0X10)
+ 858   1              {
+ 859   2                      flag_c0_5 = 1;
+ 860   2                      out_c = out_c|0x1000;
+ 861   2                }
+ 862   1                
+ 863   1           if(WORDR&0X20)
+ 864   1               {
+ 865   2                      flag_c0_6 = 1;
+ 866   2                      out_c = out_c|0x2000;
+ 867   2                }
+ 868   1                
+ 869   1           if(WORDR&0X40)
+ 870   1              {
+ 871   2                      flag_c0_7 = 1;
+ 872   2                      out_c = out_c|0x4000;
+ 873   2                }
+ 874   1                
+ 875   1           if(WORDR&0X80)
+ 876   1               {
+ 877   2                      flag_c0_8 = 1;
+ 878   2                      out_c = out_c|0x8000;
+ 879   2                }
+ 880   1              
+ 881   1              
+ 882   1           SM_Receive (CHIP_C, PCA9555A_InPutPort1);
+ 883   1           WORDR = WORDR;
+ 884   1           if(!(WORDR==0x00))
+ 885   1              {
+ 886   2                      flag_c1_pass++;
+ 887   2              }
+ 888   1           if(WORDR&0X01)
+ 889   1              {
+ 890   2                      flag_c1_1 = 1;
+ 891   2                      out_c = out_c|0x0001;
+ 892   2                }
+ 893   1              
+ 894   1           if(WORDR&0X02)
+ 895   1              {
+ 896   2                      flag_c1_2 = 1;
+ 897   2                      out_c = out_c|0x0002;
+ 898   2                }
+ 899   1                
+ 900   1           if(WORDR&0X04)
+ 901   1              {
+ 902   2                      flag_c1_3 = 1;
+ 903   2                      out_c = out_c|0x0004;
+ 904   2                }
+ 905   1                
+ 906   1           if(WORDR&0X08)
+ 907   1              {
+ 908   2                      flag_c1_4 = 1;
+ 909   2                      out_c = out_c|0x0008;
+ 910   2                }
+ 911   1                
+ 912   1           if(WORDR&0X10)
+ 913   1              {
+ 914   2                      flag_c1_5 = 1;
+ 915   2                      out_c = out_c|0x0010;
+ 916   2                }
+ 917   1                
+C51 COMPILER V7.50   5115                                                                  10/18/2017 14:40:06 PAGE 16  
+
+ 918   1           if(WORDR&0X20)
+ 919   1               {
+ 920   2                      flag_c1_6 = 1;
+ 921   2                      out_c = out_c|0x0020;
+ 922   2                }
+ 923   1                
+ 924   1           if(WORDR&0X40)
+ 925   1              {
+ 926   2                      flag_c1_7 = 1;
+ 927   2                      out_c = out_c|0x0040;
+ 928   2                }
+ 929   1                
+ 930   1           if(WORDR&0X80)
+ 931   1               {
+ 932   2                      flag_c1_8 = 1;
+ 933   2                      out_c = out_c|0x0080;
+ 934   2                }
+ 935   1           
+ 936   1              
+ 937   1           SM_Receive (CHIP_D, PCA9555A_InPutPort0);
+ 938   1           WORDR = WORDR;
+ 939   1           if(!(WORDR==0x00))
+ 940   1              {
+ 941   2                      flag_d0_pass++;
+ 942   2              }
+ 943   1           if(WORDR&0X01)
+ 944   1              {
+ 945   2                      flag_d0_1 = 1;
+ 946   2                      out_d = out_d|0x0100;
+ 947   2                }
+ 948   1              
+ 949   1           if(WORDR&0X02)
+ 950   1              {
+ 951   2                      flag_d0_2 = 1;
+ 952   2                      out_d = out_d|0x0200;
+ 953   2                }
+ 954   1                
+ 955   1           if(WORDR&0X04)
+ 956   1              {
+ 957   2                      flag_d0_3 = 1;
+ 958   2                      out_d = out_d|0x0400;
+ 959   2                }
+ 960   1                
+ 961   1           if(WORDR&0X08)
+ 962   1              {
+ 963   2                      flag_d0_4 = 1;
+ 964   2                      out_d = out_d|0x0800;
+ 965   2                }
+ 966   1                
+ 967   1           if(WORDR&0X10)
+ 968   1              {
+ 969   2                      flag_d0_5 = 1;
+ 970   2                      out_d = out_d|0x1000;
+ 971   2                }
+ 972   1                
+ 973   1           if(WORDR&0X20)
+ 974   1               {
+ 975   2                      flag_d0_6 = 1;
+ 976   2                      out_d = out_d|0x2000;
+ 977   2                }
+ 978   1                
+ 979   1           if(WORDR&0X40)
+C51 COMPILER V7.50   5115                                                                  10/18/2017 14:40:06 PAGE 17  
+
+ 980   1              {
+ 981   2                      flag_d0_7 = 1;
+ 982   2                      out_d = out_d|0x4000;
+ 983   2                }
+ 984   1                
+ 985   1           if(WORDR&0X80)
+ 986   1               {
+ 987   2                      flag_d0_8 = 1;
+ 988   2                      out_d = out_d|0x8000;
+ 989   2                }
+ 990   1              
+ 991   1           SM_Receive (CHIP_D, PCA9555A_InPutPort1);
+ 992   1           WORDR = WORDR;
+ 993   1           if(!(WORDR==0x00))
+ 994   1              {
+ 995   2                      flag_d1_pass++;
+ 996   2              }
+ 997   1           if(WORDR&0X01)
+ 998   1              {
+ 999   2                      flag_d1_1 = 1;
+1000   2                      out_d = out_d|0x0001;
+1001   2                }
+1002   1              
+1003   1           if(WORDR&0X02)
+1004   1              {
+1005   2                      flag_d1_2 = 1;
+1006   2                      out_d = out_d|0x0002;
+1007   2                }
+1008   1                
+1009   1           if(WORDR&0X04)
+1010   1              {
+1011   2                      flag_d1_3 = 1;
+1012   2                      out_d = out_d|0x0004;
+1013   2                }
+1014   1                
+1015   1           if(WORDR&0X08)
+1016   1              {
+1017   2                      flag_d1_4 = 1;
+1018   2                      out_d = out_d|0x0008;
+1019   2                }
+1020   1                
+1021   1           if(WORDR&0X10)
+1022   1              {
+1023   2                      flag_d1_5 = 1;
+1024   2                      out_d = out_d|0x0010;
+1025   2                }
+1026   1                
+1027   1           if(WORDR&0X20)
+1028   1               {
+1029   2                      flag_d1_6 = 1;
+1030   2                      out_d = out_d|0x0020;
+1031   2                }
+1032   1                
+1033   1           if(WORDR&0X40)
+1034   1              {
+1035   2                      flag_d1_7 = 1;
+1036   2                      out_d = out_d|0x0040;
+1037   2                }
+1038   1                
+1039   1           if(WORDR&0X80)
+1040   1               {
+1041   2                      flag_d1_8 = 1;
+C51 COMPILER V7.50   5115                                                                  10/18/2017 14:40:06 PAGE 18  
+
+1042   2                      out_d = out_d|0x0080;
+1043   2                }
+1044   1              
+1045   1              
+1046   1           SM_Receive (CHIP_E, PCA9555A_InPutPort0);
+1047   1           WORDR = WORDR;
+1048   1           if(!(WORDR==0x00))
+1049   1              {
+1050   2                      flag_e0_pass++;
+1051   2              }
+1052   1           if(WORDR&0X01)
+1053   1              {
+1054   2                      flag_e0_1 = 1;
+1055   2                      out_e = out_e|0x0100;
+1056   2                }
+1057   1              
+1058   1           if(WORDR&0X02)
+1059   1              {
+1060   2                      flag_e0_2 = 1;
+1061   2                      out_e = out_e|0x0200;
+1062   2                }
+1063   1                
+1064   1           if(WORDR&0X04)
+1065   1              {
+1066   2                      flag_e0_3 = 1;
+1067   2                      out_e = out_e|0x0400;
+1068   2                }
+1069   1                
+1070   1           if(WORDR&0X08)
+1071   1              {
+1072   2                      flag_e0_4 = 1;
+1073   2                      out_e = out_e|0x0800;
+1074   2                }
+1075   1                
+1076   1           if(WORDR&0X10)
+1077   1              {
+1078   2                      flag_e0_5 = 1;
+1079   2                      out_e = out_e|0x1000;
+1080   2                }
+1081   1                
+1082   1           if(WORDR&0X20)
+1083   1               {
+1084   2                      flag_e0_6 = 1;
+1085   2                      out_e = out_e|0x2000;
+1086   2                }
+1087   1                
+1088   1           if(WORDR&0X40)
+1089   1              {
+1090   2                      flag_e0_7 = 1;
+1091   2                      out_e = out_e|0x4000;
+1092   2                }
+1093   1                
+1094   1           if(WORDR&0X80)
+1095   1               {
+1096   2                      flag_e0_8 = 1;
+1097   2                      out_e = out_e|0x8000;
+1098   2                }
+1099   1              
+1100   1              
+1101   1           SM_Receive (CHIP_E, PCA9555A_InPutPort1);
+1102   1           WORDR = WORDR;
+1103   1           if(!(WORDR==0x00))
+C51 COMPILER V7.50   5115                                                                  10/18/2017 14:40:06 PAGE 19  
+
+1104   1              {
+1105   2                      flag_e1_pass++;
+1106   2              }
+1107   1           if(WORDR&0X01)
+1108   1              {
+1109   2                      flag_e1_1 = 1;
+1110   2                      out_e = out_e|0x0001;
+1111   2                }
+1112   1              
+1113   1           if(WORDR&0X02)
+1114   1              {
+1115   2                      flag_e1_2 = 1;
+1116   2                      out_e = out_e|0x0002;
+1117   2                }
+1118   1                
+1119   1           if(WORDR&0X04)
+1120   1              {
+1121   2                      flag_e1_3 = 1;
+1122   2                      out_e = out_e|0x0004;
+1123   2                }
+1124   1                
+1125   1           if(WORDR&0X08)
+1126   1              {
+1127   2                      flag_e1_4 = 1;
+1128   2                      out_e = out_e|0x0008;
+1129   2                }
+1130   1                
+1131   1           if(WORDR&0X10)
+1132   1              {
+1133   2                      flag_e1_5 = 1;
+1134   2                      out_e = out_e|0x0010;
+1135   2                }
+1136   1                
+1137   1           if(WORDR&0X20)
+1138   1               {
+1139   2                      flag_e1_6 = 1;
+1140   2                      out_e = out_e|0x0020;
+1141   2                }
+1142   1                
+1143   1           if(WORDR&0X40)
+1144   1              {
+1145   2                      flag_e1_7 = 1;
+1146   2                      out_e = out_e|0x0040;
+1147   2                }
+1148   1                
+1149   1           if(WORDR&0X80)
+1150   1               {
+1151   2                      flag_e1_8 = 1;
+1152   2                      out_e = out_e|0x0080;
+1153   2                }
+1154   1              
+1155   1              
+1156   1           SM_Receive (CHIP_F, PCA9555A_InPutPort0);
+1157   1           WORDR = WORDR;
+1158   1           if(!(WORDR==0x00))
+1159   1              {
+1160   2                      flag_f0_pass++;
+1161   2              }
+1162   1           if(WORDR&0X01)
+1163   1              {
+1164   2                      flag_f0_1 = 1;
+1165   2                      out_f = out_f|0x0100;
+C51 COMPILER V7.50   5115                                                                  10/18/2017 14:40:06 PAGE 20  
+
+1166   2                }
+1167   1              
+1168   1           if(WORDR&0X02)
+1169   1              {
+1170   2                      flag_f0_2 = 1;
+1171   2                      out_f = out_f|0x0200;
+1172   2                }
+1173   1                
+1174   1           if(WORDR&0X04)
+1175   1              {
+1176   2                      flag_f0_3 = 1;
+1177   2                      out_f = out_f|0x0400;
+1178   2                }
+1179   1                
+1180   1           if(WORDR&0X08)
+1181   1              {
+1182   2                      flag_f0_4 = 1;
+1183   2                      out_f = out_f|0x0800;
+1184   2                }
+1185   1                
+1186   1           if(WORDR&0X10)
+1187   1              {
+1188   2                      flag_f0_5 = 1;
+1189   2                      out_f = out_f|0x1000;
+1190   2                }
+1191   1                
+1192   1           if(WORDR&0X20)
+1193   1               {
+1194   2                      flag_f0_6 = 1;
+1195   2                      out_f = out_f|0x2000;
+1196   2                }
+1197   1                
+1198   1           if(WORDR&0X40)
+1199   1              {
+1200   2                      flag_f0_7 = 1;
+1201   2                      out_f = out_f|0x4000;
+1202   2                }
+1203   1                
+1204   1           if(WORDR&0X80)
+1205   1               {
+1206   2                      flag_f0_8 = 1;
+1207   2                      out_f = out_f|0x8000;
+1208   2                }
+1209   1           
+1210   1           SM_Receive (CHIP_F, PCA9555A_InPutPort1);
+1211   1           WORDR = WORDR;
+1212   1           if(!(WORDR==0x00))
+1213   1              {
+1214   2                      flag_f1_pass++;
+1215   2              }
+1216   1           if(WORDR&0X01)
+1217   1              {
+1218   2                      flag_f1_1 = 1;
+1219   2                      out_f = out_f|0x0001;
+1220   2                }
+1221   1              
+1222   1           if(WORDR&0X02)
+1223   1              {
+1224   2                      flag_f1_2 = 1;
+1225   2                      out_f = out_f|0x0002;
+1226   2                }
+1227   1                
+C51 COMPILER V7.50   5115                                                                  10/18/2017 14:40:06 PAGE 21  
+
+1228   1           if(WORDR&0X04)
+1229   1              {
+1230   2                      flag_f1_3 = 1;
+1231   2                      out_f = out_f|0x0004;
+1232   2                }
+1233   1                
+1234   1           if(WORDR&0X08)
+1235   1              {
+1236   2                      flag_f1_4 = 1;
+1237   2                      out_f = out_f|0x0008;
+1238   2                }
+1239   1                
+1240   1           if(WORDR&0X10)
+1241   1              {
+1242   2                      flag_f1_5 = 1;
+1243   2                      out_f = out_f|0x0010;
+1244   2                }
+1245   1                
+1246   1           if(WORDR&0X20)
+1247   1               {
+1248   2                      flag_f1_6 = 1;
+1249   2                      out_f = out_f|0x0020;
+1250   2                }
+1251   1                
+1252   1           if(WORDR&0X40)
+1253   1              {
+1254   2                      flag_f1_7 = 1;
+1255   2                      out_f = out_f|0x0040;
+1256   2                }
+1257   1                
+1258   1           if(WORDR&0X80)
+1259   1               {
+1260   2                      flag_f1_8 = 1;
+1261   2                      out_f = out_f|0x0080;
+1262   2                }
+1263   1              
+1264   1              
+1265   1           SM_Receive (CHIP_G, PCA9555A_InPutPort0);
+1266   1           WORDR = WORDR;
+1267   1           if(!(WORDR==0xf0))
+1268   1              {
+1269   2                      flag_g0_pass++;
+1270   2              }
+1271   1           if(WORDR&0X01)
+1272   1              {
+1273   2                      flag_g0_1 = 1;
+1274   2                      out_g = out_g|0x0100;
+1275   2                }
+1276   1              
+1277   1           if(WORDR&0X02)
+1278   1              {
+1279   2                      flag_g0_2 = 1;
+1280   2                      out_g = out_g|0x0200;
+1281   2                      }
+1282   1                
+1283   1           if(WORDR&0X04)
+1284   1              {
+1285   2                      flag_g0_3 = 1;
+1286   2                      out_g = out_g|0x0400;
+1287   2                }
+1288   1                
+1289   1           if(WORDR&0X08)
+C51 COMPILER V7.50   5115                                                                  10/18/2017 14:40:06 PAGE 22  
+
+1290   1              {
+1291   2                      flag_g0_4 = 1;
+1292   2                      out_g = out_g|0x0800;
+1293   2                }
+1294   1                
+1295   1      //     if(WORDR&&0X10)
+1296   1      //      {
+1297   1      //              flag_g0_5 = 1;
+1298   1      //        }
+1299   1      //        
+1300   1      //     if(WORDR&&0X20)
+1301   1      //       {
+1302   1      //              flag_g0_6 = 1;
+1303   1      //        }
+1304   1      //        
+1305   1      //     if(WORDR&&0X40)
+1306   1      //      {
+1307   1      //              flag_g0_7 = 1;
+1308   1      //        }
+1309   1      //        
+1310   1      //     if(WORDR&&0X80)
+1311   1      //       {
+1312   1      //              flag_g0_8 = 1;
+1313   1      //        }
+1314   1           
+1315   1           
+1316   1      //     SM_Receive (CHIP_G, PCA9555A_InPutPort1);
+1317   1      //     WORDR = WORDR;
+1318   1      //     if(WORDR==0x00)
+1319   1      //      {
+1320   1      //              flag_g1_pass = 1;
+1321   1      //      }
+1322   1      //     if(WORDR&&0X01)
+1323   1      //      {
+1324   1      //              flag_g1_1 = 1;
+1325   1      //        }
+1326   1      //      
+1327   1      //     if(WORDR&&0X02)
+1328   1      //      {
+1329   1      //              flag_g1_2 = 1;
+1330   1      //        }
+1331   1      //        
+1332   1      //     if(WORDR&&0X04)
+1333   1      //      {
+1334   1      //              flag_g1_3 = 1;
+1335   1      //        }
+1336   1      //        
+1337   1      //     if(WORDR&&0X08)
+1338   1      //      {
+1339   1      //              flag_g1_4 = 1;
+1340   1      //        }
+1341   1                
+1342   1      //     if(WORDR&&0X10)
+1343   1      //      {
+1344   1      //              flag_f1_5 = 1;
+1345   1      //        }
+1346   1      //        
+1347   1      //     if(WORDR&&0X20)
+1348   1      //       {
+1349   1      //              flag_f1_6 = 1;
+1350   1      //        }
+1351   1      //        
+C51 COMPILER V7.50   5115                                                                  10/18/2017 14:40:06 PAGE 23  
+
+1352   1      //     if(WORDR&&0X40)
+1353   1      //      {
+1354   1      //              flag_f1_7 = 1;
+1355   1      //        }
+1356   1      //        
+1357   1      //     if(WORDR&&0X80)
+1358   1      //       {
+1359   1      //              flag_f1_8 = 1;
+1360   1      //        }
+1361   1              
+1362   1              }
+1363          //-----------------------------------------------------------------------------
+1364          // ADC 
+1365          //-----------------------------------------------------------------------------
+1366          //void ADC (unsigned char Channel)
+1367          //    {
+1368          //      
+1369          //      float  AD_VAL_TEST,AD_VAL;
+1370          //      unsigned char xdata YYY;
+1371          //      unsigned int xdata ad_arr[20];//,TempData;
+1372          //              Channel_Select = Channel; 
+1373          //                AMX0SL = Channel_Select;      // AMUX Channel Select Register
+1374          //         //delaynms(5);
+1375          //    AD_VAL=0;
+1376          //    AD_VAL_TEST = 0;
+1377          //    for( YYY = 0;YYY<20;YYY++) 
+1378          //    {
+1379          //    ad_arr[YYY]=0;
+1380          //    } 
+1381          //    YYY=0; 
+1382          //    ADCINT = 0; 
+1383          //    
+1384          //    for(YYY= 0;YYY<20;YYY++)     //AD_TIMES=50  采50次
+1385          //    {  
+1386          //    ADBUSY = 1;   
+1387          // 
+1388          //    delayn_ms(20);  ////////////---------------------------------------------------采样等待
+1389          //    while (!ADCINT); 
+1390          //        ADCINT = 0;   
+1391          //    _nop_();
+1392          //    _nop_();
+1393          //    _nop_();             //*AD_POINTER = ADC0
+1394          //    ad_arr[YYY]=ADC0;          
+1395          //     }
+1396          //    //ADC0 = 0; 
+1397          //    for(YYY=0;YYY<20;YYY++) //  for(i = 0;i <AD_TIMES;i++)
+1398          //      { 
+1399          //              AD_VAL_TEST += ad_arr[YYY];
+1400          //     }
+1401          // 
+1402          //      AD_VAL = (AD_VAL_TEST/20);     
+1403          //      AD_VAL = AD_VAL/4096;
+1404          //      AD_VAL = AD_VAL*2.43; 
+1405          //      adtemp = AD_VAL;
+1406          //       } 
+1407          
+1408          //-----------------------------------------------------------------------------
+1409          void Clear()
+1410          { 
+1411   1                 Dac0Rst();
+1412   1                 Mos = 1;
+1413   1                 Led_red = 1;
+C51 COMPILER V7.50   5115                                                                  10/18/2017 14:40:06 PAGE 24  
+
+1414   1               Led_yellow = 1;
+1415   1               Led_green = 1;
+1416   1               rst_smbus();
+1417   1               
+1418   1               STO = 1;                      // Reset communication.
+1419   1           SI=0;                               // clear interrupt flag
+1420   1                 
+1421   1                 flag_a0_pass=0;flag_a1_pass=0;flag_b0_pass=0;flag_b1_pass=0;flag_c0_pass=0;flag_c1_pass=0;flag_d0_pass
+             -=0;flag_d1_pass=0;flag_e0_pass=0;flag_e1_pass=0;flag_f0_pass=0;flag_f1_pass=0;flag_g0_pass=0;
+1422   1           flag_a0_1=0;flag_a0_2=0;flag_a0_3=0;flag_a0_4=0;flag_a0_5=0;flag_a0_6=0;flag_a0_7=0;flag_a0_8=0;
+1423   1           flag_a1_1=0;flag_a1_2=0;flag_a1_3=0;flag_a1_4=0;flag_a1_5=0;flag_a1_6=0;flag_a1_7=0;flag_a1_8=0;
+1424   1           flag_b0_1=0;flag_b0_2=0;flag_b0_3=0;flag_b0_4=0;flag_b0_5=0;flag_b0_6=0;flag_b0_7=0;flag_b0_8=0;
+1425   1           flag_b1_1=0;flag_b1_2=0;flag_b1_3=0;flag_b1_4=0;flag_b1_5=0;flag_b1_6=0;flag_b1_7=0;flag_b1_8=0;
+1426   1           flag_c0_1=0;flag_c0_2=0;flag_c0_3=0;flag_c0_4=0;flag_c0_5=0;flag_c0_6=0;flag_c0_7=0;flag_c0_8=0;
+1427   1           flag_c1_1=0;flag_c1_2=0;flag_c1_3=0;flag_c1_4=0;flag_c1_5=0;flag_c1_6=0;flag_c1_7=0;flag_c1_8=0;
+1428   1           flag_d0_1=0;flag_d0_2=0;flag_d0_3=0;flag_d0_4=0;flag_d0_5=0;flag_d0_6=0;flag_d0_7=0;flag_d0_8=0;
+1429   1           flag_d1_1=0;flag_d1_2=0;flag_d1_3=0;flag_d1_4=0;flag_d1_5=0;flag_d1_6=0;flag_d1_7=0;flag_d1_8=0;
+1430   1           flag_e0_1=0;flag_e0_2=0;flag_e0_3=0;flag_e0_4=0;flag_e0_5=0;flag_e0_6=0;flag_e0_7=0;flag_e0_8=0;
+1431   1           flag_e1_1=0;flag_e1_2=0;flag_e1_3=0;flag_e1_4=0;flag_e1_5=0;flag_e1_6=0;flag_e1_7=0;flag_e1_8=0;
+1432   1           flag_f0_1=0;flag_f0_2=0;flag_f0_3=0;flag_f0_4=0;flag_f0_5=0;flag_f0_6=0;flag_f0_7=0;flag_f0_8=0;
+1433   1           flag_f1_1=0;flag_f1_2=0;flag_f1_3=0;flag_f1_4=0;flag_f1_5=0;flag_f1_6=0;flag_f1_7=0;flag_f1_8=0;
+1434   1           flag_g0_1=0;flag_g0_2=0;flag_g0_3=0;flag_g0_4=0;
+1435   1           
+1436   1           out_a = 0x0000; out_b = 0x0000; out_c = 0x0000; out_d = 0x0000; out_e = 0x0000; out_f = 0x0000; out_g
+             - = 0x0000;
+1437   1                 
+1438   1                 
+1439   1                 
+1440   1              }
+1441          //-----------------------------------------------------------------------------
+1442          // void output_final()
+1443          //-----------------------------------------------------------------------------
+1444          void output_final()
+1445          {
+1446   1              SM_Send(CHIP_A,PCA9555A_Configport0,0x0000);   //A输出 
+1447   1              delaynms(10);
+1448   1                SM_Send(CHIP_B,PCA9555A_Configport0,0x0000);   //A输出 
+1449   1              delaynms(10);
+1450   1              SM_Send(CHIP_C,PCA9555A_Configport0,0x0000);   //A输出 
+1451   1              delaynms(10);
+1452   1              SM_Send(CHIP_D,PCA9555A_Configport0,0x0000);   //A输出 
+1453   1              delaynms(10);
+1454   1              SM_Send(CHIP_E,PCA9555A_Configport0,0x0000);   //A输出 
+1455   1              delaynms(10);
+1456   1              SM_Send(CHIP_F,PCA9555A_Configport0,0x0000);   //A输出 
+1457   1              delaynms(10);
+1458   1              SM_Send(CHIP_G,PCA9555A_Configport0,0x0000);   //A输出 
+1459   1              delaynms(10);
+1460   1              
+1461   1                SM_Send(CHIP_A,PCA9555A_Configport1,0x0000);   //A输出 
+1462   1              delaynms(10);
+1463   1                SM_Send(CHIP_B,PCA9555A_Configport1,0x0000);   //A输出 
+1464   1              delaynms(10);
+1465   1              SM_Send(CHIP_C,PCA9555A_Configport1,0x0000);   //A输出 
+1466   1              delaynms(10);
+1467   1              SM_Send(CHIP_D,PCA9555A_Configport1,0x0000);   //A输出 
+1468   1              delaynms(10);
+1469   1              SM_Send(CHIP_E,PCA9555A_Configport1,0x0000);   //A输出 
+1470   1              delaynms(10);
+1471   1              SM_Send(CHIP_F,PCA9555A_Configport1,0x0000);   //A输出 
+1472   1              delaynms(10);
+1473   1              
+C51 COMPILER V7.50   5115                                                                  10/18/2017 14:40:06 PAGE 25  
+
+1474   1              
+1475   1                //输出时，先配置好0口和1口，16位一起写
+1476   1                
+1477   1                SM_Send(CHIP_A,PCA9555A_OutPutPort0,out_a);   //写1恢复A片全1
+1478   1          delaynms(5);
+1479   1          SM_Send(CHIP_B,PCA9555A_OutPutPort0,out_b);   //写1恢复A片全1
+1480   1          delaynms(5);
+1481   1          SM_Send(CHIP_C,PCA9555A_OutPutPort0,out_c);   //写1恢复A片全1
+1482   1          delaynms(5);
+1483   1              SM_Send(CHIP_D,PCA9555A_OutPutPort0,out_d);   //写1恢复A片全1
+1484   1          delaynms(5);
+1485   1          SM_Send(CHIP_E,PCA9555A_OutPutPort0,out_e);   //写1恢复A片全1
+1486   1          delaynms(5);
+1487   1          SM_Send(CHIP_F,PCA9555A_OutPutPort0,out_f);   //写1恢复A片全1
+1488   1          delaynms(5);
+1489   1          SM_Send(CHIP_G,PCA9555A_OutPutPort0,out_g);   //写1恢复A片全1
+1490   1          delaynms(5);
+1491   1              
+1492   1              }
+1493          //-----------------------------------------------------------------------------
+1494          // Timer3_Init
+1495          //-----------------------------------------------------------------------------
+1496          //
+1497          // Return Value : None
+1498          // Parameters   : None
+1499          //
+1500          // Timer3 configured for use by the SMBus low timeout detect feature as
+1501          // follows:
+1502          // - SYSCLK/12 as Timer3 clock source
+1503          // - Timer3 reload registers loaded for a 25ms overflow period
+1504          // - Timer3 pre-loaded to overflow after 25ms
+1505          // - Timer3 enabled
+1506          //
+1507          //void Timer3_Init (void)
+1508          //{
+1509          //   TMR3CN = 0x00;                      // Timer3 uses SYSCLK/12
+1510          //
+1511          //   TMR3RL = -(SYSCLK/12/40);           // Timer3 configured to overflow after
+1512          //   TMR3 = TMR3RL;                      // ~25ms (for SMBus low timeout detect)
+1513          //
+1514          //   EIE2 |= 0x01;                       // Timer3 interrupt enable
+1515          //   TMR3CN |= 0x04;                     // Start Timer3
+1516          //}
+1517          
+1518          //-----------------------------------------------------------------------------
+1519          // Timer3 Interrupt Service Routine (ISR)
+1520          //-----------------------------------------------------------------------------
+1521          //
+1522          // A Timer3 interrupt indicates an SMBus SCL low timeout.
+1523          // The SMBus is disabled and re-enabled if a timeout occurs.
+1524          //
+1525          //void Timer3_ISR (void) interrupt 14
+1526          //{
+1527          //   SMB0CN &= ~0x40;                    // Disable SMBus
+1528          //   SMB0CN |= 0x40;                     // Re-enable SMBus
+1529          //   TMR3CN &= ~0x80;                    // Clear Timer3 interrupt-pending flag
+1530          //   SM_BUSY = 0;                       // Free bus
+1531          //}
+1532          //-----------------------------------------------------------------------------
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+C51 COMPILER V7.50   5115                                                                  10/18/2017 14:40:06 PAGE 26  
+
+   CODE SIZE        =   4333    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =    142    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =     26       8
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =      1    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  1 WARNING(S),  0 ERROR(S)

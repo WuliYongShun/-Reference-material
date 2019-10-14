@@ -1,0 +1,246 @@
+/********************************************************************
+*           For GPS Walkie Talkie 821
+*     (c) Copyright 2010, suoyin
+*             All Rights Reserved
+*
+* File   :  SAUitoplayer.c
+* History:
+*           08/06/2010 Created by liufang
+*********************************************************************/
+#define TARGET_IS_TEMPEST_RB1
+#define ewarm
+
+#include "SAInclude.h"
+
+//-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-cut-off rule-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-
+//
+//内部宏定义
+//
+//-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-cut-off rule-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-
+
+
+//-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-cut-off rule-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-
+//
+//函数内部部调用声明
+//
+//-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-cut-off rule-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-
+
+//void
+   //
+
+//-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-cut-off rule-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-
+//
+//函数内部部变量声明
+//
+//-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-cut-off rule-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-
+
+//  定义CAT9555（I2C接口）
+#define  CAT9555_SLA         (0x40>>1)   //定义CAT9555的器件地址
+#define  CAT9555_INPUT0       0//CAT9555输入端口寄存器0
+#define  CAT9555_INPUT1       1//CAT9555输入端口寄存器1
+#define  CAT9555_OUTPUT0      2//CAT9555输出端口寄存器0
+#define  CAT9555_OUTPUT1      3//CAT9555输出端口寄存器1
+#define  CAT9555_PI0          4//CAT9555反转寄存器0
+#define  CAT9555_PI1          5//CAT9555反转寄存器1
+#define  CAT9555_CFG0         6//CAT9555配置寄存器0
+#define  CAT9555_CFG1         7//CAT9555配置寄存器1      
+
+tI2CM_DEVICE CAT9555  = {CAT9555_SLA, 0x00, 0x01, (void *)0, 0x00};
+unsigned char gucPort1Status;
+
+//-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-cut-off rule-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-
+//
+//描  述：写寄存器 函数
+//功  能：写寄存器
+//形  参：unsigned char ucAddr:CAT9555_OUTPUT0
+//                             CAT9555_OUTPUT1
+//                             CAT9555_CFG0
+//                             CAT9555_CFG1
+//        unsigned char ucData:8bit data
+//返  回：ulStatus  返回可能的错误状态
+//
+//-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-cut-off rule-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-
+unsigned char CAT9555MWriteReg(unsigned char ucAddr, unsigned char ucData0,unsigned char ucData1)
+{   
+    unsigned char ucDataTemp[2];
+    unsigned long ulStatus = 0;
+
+    ucDataTemp[0] = ucData0;//port0 data
+    ucDataTemp[1] = ucData1;//port1 data
+    I2CM_DeviceDataSet(&CAT9555,ucAddr,ucDataTemp, 2);
+    ulStatus = I2CM_DataSend(&CAT9555);  
+
+    return ulStatus;
+}
+
+
+//-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-cut-off rule-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-
+//
+//描  述：CAT9555初始化函数
+//功  能：配置CAT9555,包括16个I/O口的初始化 input:1  output:0
+//形  参：无
+//返  回：无
+//
+//-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-cut-off rule-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-
+void CAT9555Init(void)
+{
+    gucPort1Status = 0;
+    CAT9555MWriteReg(CAT9555_CFG0, 0x00,0x00);//P0.0~P0.7，P1.0~P1.7为输出脚
+    CAT9555MWriteReg(CAT9555_OUTPUT0, gucPort1Status,gucPort1Status);//P0.0~P0.7，P1.0~P1.7输出0
+}
+//-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-cut-off rule-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-
+//
+//描  述：电源控制函数
+//功  能：电源控制输出端口
+//形  参：tBoolean tFlag：1：写高电平  0：写低电平
+//返  回：无
+//
+//-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-cut-off rule-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-
+unsigned char CAT9555PwrCtrl(tBoolean tFlag)
+{
+    unsigned long ulStatus = 0;
+
+    if (tFlag)
+        gucPort1Status = (gucPort1Status | 0x80);//P1.7
+    else
+        gucPort1Status = (gucPort1Status & 0x7f);//P1.7
+    ulStatus = CAT9555MWriteReg(CAT9555_OUTPUT0, gucPort1Status,gucPort1Status);//P1.0~P1.7为输出脚
+
+    return ulStatus;
+}
+
+//-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-cut-off rule-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-
+//
+//描  述：按键音控制函数
+//功  能：按键音控制输出端口
+//形  参：tBoolean tFlag：1：写高电平  0：写低电平
+//返  回：无
+//
+//-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-cut-off rule-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-
+unsigned char CAT9555BeepCtrl(tBoolean tFlag)
+{
+    unsigned long ulStatus = 0;
+
+    if (tFlag)
+        gucPort1Status = (gucPort1Status | 0x40);//P1.6
+    else
+        gucPort1Status = (gucPort1Status & 0xbf);//P1.6
+    ulStatus = CAT9555MWriteReg(CAT9555_OUTPUT0, gucPort1Status,gucPort1Status);//P1.0~P1.7为输出脚
+    return ulStatus;
+}
+//-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-cut-off rule-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-
+//
+//描  述：LCD控制函数
+//功  能：LCD控制输出端口
+//形  参：tBoolean tFlag：1：写高电平  0：写低电平
+//返  回：无
+//
+//-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-cut-off rule-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-
+unsigned char CAT9555LCDCtrl(tBoolean tFlag)
+{
+    unsigned long ulStatus = 0;
+
+    if (tFlag)
+        gucPort1Status = (gucPort1Status | 0x20);//P1.5
+    else
+        gucPort1Status = (gucPort1Status & 0xdf);//P1.5
+    ulStatus = CAT9555MWriteReg(CAT9555_OUTPUT0, gucPort1Status,gucPort1Status);//P1.0~P1.7为输出脚
+    return ulStatus;
+}
+//-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-cut-off rule-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-
+//
+//描  述：GPS控制函数
+//功  能：GPS控制输出端口
+//形  参：tBoolean tFlag：1：写高电平  0：写低电平
+//返  回：无
+//
+//-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-cut-off rule-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-
+unsigned char CAT9555GPSCtrl(tBoolean tFlag)
+{
+    unsigned long ulStatus = 0;
+
+    if (tFlag)
+        gucPort1Status = (gucPort1Status | 0x10);//P1.4
+    else
+        gucPort1Status = (gucPort1Status & 0xef);//P1.4
+    ulStatus = CAT9555MWriteReg(CAT9555_OUTPUT0, gucPort1Status,gucPort1Status);//P1.0~P1.7为输出脚
+    return ulStatus;
+}
+//-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-cut-off rule-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-
+//
+//描  述：voice pa控制函数
+//功  能：voice pa控制输出端口
+//形  参：tBoolean tFlag：1：写高电平  0：写低电平
+//返  回：无
+//
+//-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-cut-off rule-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-
+unsigned char CAT9555VoicePaCtrl(tBoolean tFlag)
+{
+    unsigned long ulStatus = 0;
+
+    if (tFlag)
+        gucPort1Status = (gucPort1Status | 0x08);//P1.3
+    else
+        gucPort1Status = (gucPort1Status & 0xf7);//P1.3
+    ulStatus = CAT9555MWriteReg(CAT9555_OUTPUT0, gucPort1Status,gucPort1Status);//P1.0~P1.7为输出脚
+    return ulStatus;
+}
+//-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-cut-off rule-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-
+//
+//描  述：PWM控制函数
+//功  能：PWM控制输出端口
+//形  参：tBoolean tFlag：1：写高电平  0：写低电平
+//返  回：无
+//
+//-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-cut-off rule-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-
+unsigned char CAT9555PWMCtrl(tBoolean tFlag)
+{
+    unsigned long ulStatus = 0;
+
+    if (tFlag)
+        gucPort1Status = (gucPort1Status | 0x04);//P1.2
+    else
+        gucPort1Status = (gucPort1Status & 0xfb);//P1.2
+    ulStatus = CAT9555MWriteReg(CAT9555_OUTPUT0, gucPort1Status,gucPort1Status);//P1.0~P1.7为输出脚
+    return ulStatus;
+}
+
+//-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-cut-off rule-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-
+//
+//描  述：对讲机发送控制函数
+//功  能：对讲机发送控制脚TX
+//形  参：tBoolean tFlag：1：写高电平  0：写低电平
+//返  回：无
+//
+//-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-cut-off rule-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-
+unsigned char CA9555WalTalTxCtrl(tBoolean tFlag)
+{
+    unsigned long ulStatus = 0;
+
+    if (tFlag)
+        gucPort1Status = (gucPort1Status | 0x02);//P1.1
+    else
+        gucPort1Status = (gucPort1Status & 0xfd);//P1.1
+    ulStatus = CAT9555MWriteReg(CAT9555_OUTPUT0, gucPort1Status,gucPort1Status);//P1.0~P1.7为输出脚
+    return ulStatus;
+}
+
+//-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-cut-off rule-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-
+//
+//描  述：对讲机接收控制函数
+//功  能：对讲机接收控制脚RX
+//形  参：tBoolean tFlag：1：写高电平  0：写低电平
+//返  回：无
+//
+//-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-cut-off rule-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-
+unsigned char CA9555WalTalRxCtrl(tBoolean tFlag)
+{
+    unsigned long ulStatus = 0;
+
+    if (tFlag)
+        gucPort1Status = (gucPort1Status | 0x01);//P1.0
+    else
+        gucPort1Status = (gucPort1Status & 0xfe);//P1.0
+    ulStatus = CAT9555MWriteReg(CAT9555_OUTPUT0, gucPort1Status,gucPort1Status);//P1.0~P1.7为输出脚
+    return ulStatus;
+}
